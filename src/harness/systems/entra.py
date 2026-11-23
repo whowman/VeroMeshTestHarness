@@ -43,7 +43,7 @@ class Entra(SourceSystem):
         for p in t.people.values():
             pos = p.at(day)
             gone = p.left and p.left <= day
-            stays_enabled = bool(gone) and self.quirk(0.15, "leaver-enabled", p.id)
+            stays_enabled = bool(gone) and self.quirk(0.15, "leaver-account-enabled", p.id)
             if gone and (day - p.left).days > DISABLED_FOR and not stays_enabled:
                 continue  # deleted
             if pos is None and not gone:
@@ -51,7 +51,7 @@ class Entra(SourceSystem):
             last = pos or p.history[-1]
             uid = self.guid("user", p.id)
             given = p.given
-            if p.given in prof.NICKNAMES and self.quirk(0.5, "nickname", p.id):
+            if p.given in prof.NICKNAMES and self.quirk(0.5, "name-variant", p.id):
                 given = prof.NICKNAMES[p.given]
                 defects.append(defect("name-variant", self.name, {"person": p.id}, f"{p.given} appears as {given}"))
             manager = last.manager
@@ -67,7 +67,7 @@ class Entra(SourceSystem):
                     )
                 )
             mail = p.email
-            if self.quirk(0.02, "no-mail", p.id):
+            if self.quirk(0.02, "missing-mail", p.id):
                 mail = None
                 defects.append(defect("missing-mail", self.name, {"person": p.id}, "account has no mail address"))
             enabled = not gone or stays_enabled

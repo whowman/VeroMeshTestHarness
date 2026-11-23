@@ -1,0 +1,6 @@
+apiVersion: v2
+name: veromesh-test-harness
+description: The VeroMesh test harness, a simulated company and its source systems, to run beside VeroMesh
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -28,11 +28,23 @@ class Advance(BaseModel):
     days: int
 
 
+class Difficulty(BaseModel):
+    scale: float = 1.0
+    overrides: dict[str, float] = {}
+
+
+def sp_site(d: dict) -> str:
+    from .systems.sharepoint import SITES
+
+    return SITES[d["site"]]
+
+
 def answer_key(truth: Truth, systems: dict) -> dict:
     t = truth
     return {
         "today": t.today.isoformat(),
         "organization": t.org_name,
+        "difficulty": t.difficulty,
         "defects": [d for s in systems.values() for d in s.defects()],
         "events": t.applied,
         "people": {
@@ -61,6 +73,9 @@ def answer_key(truth: Truth, systems: dict) -> dict:
             for a in t.agents.values()
         },
         "authorities": [vars(a) for a in t.authorities],
+        "documents": {f"{sp_site(d)}/{d['folder']}/{d['name']}": d["claims"] for d in systems["sharepoint"].documents()}
+        if "sharepoint" in systems
+        else {},
     }
 
 
@@ -84,6 +99,7 @@ def create_app(truth: Truth | None = None, systems: list[str] | None = None) -> 
             "people": len(truth.active_people()),
             "eventsApplied": len(truth.applied),
             "eventsScheduled": len(truth.events),
+            "difficulty": truth.difficulty,
             "systems": {n: s.title for n, s in chosen.items()},
         }
 
@@ -95,6 +111,18 @@ def create_app(truth: Truth | None = None, systems: list[str] | None = None) -> 
     @app.get("/harness/answer-key", tags=["harness"])
     def key() -> dict:
         return answer_key(truth, chosen)
+
+    @app.get("/harness/difficulty", tags=["harness"])
+    def get_difficulty() -> dict:
+        return truth.difficulty
+
+    @app.put("/harness/difficulty", tags=["harness"])
+    def set_difficulty(body: Difficulty) -> dict:
+        """Change how hard the systems make it; every system re-projects."""
+        truth.difficulty = {"scale": body.scale, "overrides": dict(body.overrides)}
+        for s in chosen.values():
+            s._cache = None
+        return truth.difficulty
 
     @app.get("/harness/scenarios", tags=["harness"])
     def list_scenarios() -> dict:

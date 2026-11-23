@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "harness.name" . }}
+  labels: {{- include "harness.labels" . | nindent 4 }}
+spec:
+  replicas: 1  # the clock lives in memory: one copy, one story
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {{- include "harness.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "harness.labels" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: harness
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - serve
+            - --profile={{ .Values.company.profile }}
+            - --people={{ int .Values.company.people }}
+            - --seed={{ int .Values.company.seed }}
+            - --days={{ int .Values.company.days }}
+            - --difficulty={{ .Values.company.difficulty }}
+            - --port={{ int .Values.service.port }}
+            {{- with .Values.company.systems }}
+            - --systems={{ join "," . }}
+            {{- end }}
+            {{- range $kind, $rate := .Values.company.quirks }}
+            - --quirk={{ $kind }}={{ $rate }}
+            {{- end }}
+          ports:
+            - {name: http, containerPort: {{ int .Values.service.port }}}
+          readinessProbe:
+            httpGet: {path: /harness/status, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /harness/status, port: http}
+            periodSeconds: 20
+            failureThreshold: 6
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          securityContext: {{- toYaml .Values.securityContext | nindent 12 }}

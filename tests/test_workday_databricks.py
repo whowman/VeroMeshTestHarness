@@ -93,7 +93,7 @@ def test_the_ap_manager_post_is_vacant_in_workday(harness):
 
 
 def test_a_retro_termination_shows_active_until_entered():
-    truth = generate(people=2000, seed=7)
+    truth = generate(people=2000, seed=7, difficulty={"scale": 1, "overrides": {"retro-termination": 1.0}})
     client = TestClient(create_app(truth))
     client.post("/harness/clock", json={"days": 90})
     retro = [d for d in client.get("/harness/answer-key").json()["defects"] if d["kind"] == "retro-termination"]

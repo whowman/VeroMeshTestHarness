@@ -22,3 +22,19 @@ jobs:
           docker run -d --name harness -p 8100:8100 veromesh/test-harness:ci serve --people 500
           for _ in $(seq 30); do curl -fs localhost:8100/harness/status && break; sleep 1; done
           curl -fs localhost:8100/harness/status
+  chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Lint and render
+        run: |
+          helm lint deploy/helm/veromesh-test-harness
+          helm template t deploy/helm/veromesh-test-harness > /tmp/default.yaml
+          helm template t deploy/helm/veromesh-test-harness \
+            --set company.difficulty=0 --set 'company.systems={entra,workday}' --set company.quirks.name-variant=0.9 \
+            --set 'networkPolicy.fromNamespaces={veromesh}' > /tmp/custom.yaml
+          grep -q -- '--systems=entra,workday' /tmp/custom.yaml
+          grep -q -- '--quirk=name-variant=0.9' /tmp/custom.yaml
+          grep -q 'kubernetes.io/metadata.name: "veromesh"' /tmp/custom.yaml
+          ! grep -q -- '--systems' /tmp/default.yaml

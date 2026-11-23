@@ -125,6 +125,21 @@ def scenarios(t: Truth, systems: dict) -> list[dict]:
         {"orders": sorted(d["about"]["po"] for d in by_kind.get("self-approved-po", []))},
     )
 
+    stale = sorted(
+        {
+            f"{d['about']['document']}#{d['about']['claim']}"
+            for k in ("document-names-leaver", "document-outdated", "policy-system-mismatch", "register-conflicts-with-catalog")
+            for d in by_kind.get(k, [])
+        }
+    )
+    add(
+        "document-claims",
+        1,
+        "Statements in the documents that are out of date or contradict the systems",
+        "Read the SharePoint documents and list each statement (document#claim) that no longer matches the organization or the systems.",
+        {"statements": stale},
+    )
+
     # ---------------------------------------------------------------- Gate 2: systems
     add(
         "system-ownership",

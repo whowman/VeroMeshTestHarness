@@ -63,7 +63,7 @@ class Workday(SourceSystem):
         for p in t.people.values():
             if p.worker_type != "employee" or p.hired > t.today:
                 continue
-            late = bool(p.left) and self.quirk(0.2, "retro", p.id)
+            late = bool(p.left) and self.quirk(0.2, "retro-termination", p.id)
             known_left = p.left if p.left and (not late or t.today >= p.left + timedelta(days=RETRO_DAYS)) else None
             if p.left and p.left <= t.today and not known_left:
                 defects.append(
@@ -76,7 +76,7 @@ class Workday(SourceSystem):
                 )
             day = min(t.today, (known_left - timedelta(days=1)) if known_left else t.today)
             pos = p.at(day) or p.history[-1]
-            preferred = prof.NICKNAMES.get(p.given) if self.quirk(0.5, "preferred", p.id) else None
+            preferred = prof.NICKNAMES.get(p.given) if self.quirk(0.5, "legal-and-preferred-name", p.id) else None
             if preferred and not (known_left and known_left <= t.today):
                 defects.append(
                     defect(

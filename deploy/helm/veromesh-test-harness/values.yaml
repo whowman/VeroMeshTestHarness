@@ -1,0 +1,36 @@
+image:
+  repository: veromesh/test-harness
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+# The simulated company.
+company:
+  profile: healthcare
+  people: 2000
+  seed: 7
+  days: 0          # move the clock this many days at start
+  difficulty: 1    # 0: no quirks and no sync lag; 1: as described; 2: twice as many
+  quirks: {}       # one quirk's rate by its defect kind, e.g. name-variant: 0.9
+  systems: []      # empty: every system; or e.g. [entra, servicenow, workday]
+
+service:
+  port: 8100
+
+resources:
+  requests: {cpu: 250m, memory: 512Mi}
+  limits: {memory: 2Gi}
+
+# Who may reach the harness: pods in these namespaces (e.g. VeroMesh's), or none other
+# than the release's own when empty. Off: no NetworkPolicy.
+networkPolicy:
+  enabled: true
+  fromNamespaces: []
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  seccompProfile: {type: RuntimeDefault}
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: {drop: [ALL]}

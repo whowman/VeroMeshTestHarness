@@ -73,7 +73,7 @@ class Emr(SourceSystem):
             if not p.npi or last.unit not in CLINICAL_UNITS or p.hired > t.today:
                 continue
             gone = p.left and p.left <= t.today
-            if gone and t.today >= p.left + timedelta(days=DEPROVISION_LAG):
+            if gone and t.today >= p.left + timedelta(days=self.lag(DEPROVISION_LAG)):
                 active = False
             else:
                 active = True
@@ -88,7 +88,7 @@ class Emr(SourceSystem):
                     )
             pid = f"prac-{p.id}"
             ident = [{"system": NPI, "value": p.npi}]
-            if self.quirk(0.02, "no-npi", p.id):
+            if self.quirk(0.02, "missing-npi", p.id):
                 ident = []
                 defects.append(defect("missing-npi", self.name, {"person": p.id}, "practitioner has no NPI identifier"))
             ident.append({"system": "urn:kestrel:employee", "value": p.employee_id})
@@ -105,7 +105,7 @@ class Emr(SourceSystem):
             privileges = (["prescribe"] if "Prescriber" in last.roles else []) + (
                 ["verify-medication"] if "Pharmacist" in last.roles else []
             )
-            if code == "nurse" and self.quirk(0.03, "rogue-prescribe", p.id):
+            if code == "nurse" and self.quirk(0.03, "privilege-not-in-hr", p.id):
                 privileges.append("prescribe")
                 defects.append(
                     defect(

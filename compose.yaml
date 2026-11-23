@@ -1,0 +1,12 @@
+# The harness on one machine: docker compose up, then http://localhost:8100/harness/status
+services:
+  harness:
+    build: .
+    image: veromesh/test-harness:local
+    command: ["serve", "--people", "${HARNESS_PEOPLE:-2000}", "--seed", "${HARNESS_SEED:-7}", "--difficulty", "${HARNESS_DIFFICULTY:-1}", "--port", "8100"]
+    ports: ["127.0.0.1:8100:8100"]
+    read_only: true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/harness/status')"]
+      interval: 5s
+      retries: 12
