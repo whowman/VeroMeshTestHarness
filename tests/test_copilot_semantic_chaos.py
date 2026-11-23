@@ -138,6 +138,12 @@ def test_chaos_responses_look_like_the_real_ones(harness):
     r = client.get("/workday/ccx/api/v1/kestrelvalley/workers")
     assert r.status_code == 401 and "invalid_token" in r.headers["WWW-Authenticate"]
     assert client.get("/harness/status").status_code == 200  # the harness's own controls always answer
+    # A sign-in request has no token to expire: it is answered normally.
+    r = client.post(
+        "/entra/kestrelvalley/oauth2/v2.0/token",
+        data={"grant_type": "client_credentials", "client_id": "veromesh-connector", "client_secret": "harness-secret"},
+    )
+    assert r.status_code == 200 and r.json()["access_token"]
     assert client.put("/harness/chaos", json={"rate": 0.1, "kinds": ["meteor"]}).status_code == 422
 
 

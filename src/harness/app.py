@@ -27,6 +27,7 @@ from .systems import REGISTRY
 from .truth import Truth, chance, generate
 
 CHAOS_KINDS = ("throttle", "server-error", "unavailable", "token-expired", "slow")
+SIGN_IN_PATHS = ("/token", "/oauth_token.do")  # token endpoints: never "your token has expired"
 
 
 class Advance(BaseModel):
@@ -116,6 +117,8 @@ def create_app(truth: Truth | None = None, systems: list[str] | None = None) -> 
         if chance(c["seed"], "chaos", n) >= c["rate"] or not c["kinds"]:
             return await call_next(request)
         kind = c["kinds"][int(chance(c["seed"], "chaos-kind", n) * len(c["kinds"]))]
+        if kind == "token-expired" and request.url.path.endswith(SIGN_IN_PATHS):
+            return await call_next(request)  # a sign-in request carries no token to expire
         seen[kind] += 1
         if kind == "slow":
             await asyncio.sleep(c["slow_ms"] / 1000)
