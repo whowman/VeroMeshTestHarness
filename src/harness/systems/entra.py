@@ -1,7 +1,8 @@
 """Microsoft Entra ID, through the Microsoft Graph API (v1.0).
 
 What a connector reads: users (with manager), groups and their members, service
-principals for AI agents (with their owners), and user changes through delta queries.
+principals for AI agents (with their owners), and user changes through delta queries
+(deleted users come back with an @removed annotation, as in Graph).
 Sign-in is OAuth client credentials at /entra/{tenant}/oauth2/v2.0/token, as with the
 real login endpoint. Paging follows @odata.nextLink; changes follow @odata.deltaLink.
 
@@ -185,6 +186,13 @@ class Entra(SourceSystem):
             items = sorted(self.records()["users"].values(), key=lambda u: u["userPrincipalName"])
             if since:
                 items = [u for u in items if date.fromisoformat(u["_changed"]) > since]
+                # Users deleted since: Graph returns them with an @removed annotation.
+                for p in self.truth.people.values():
+                    if p.left:
+                        deleted = p.left + timedelta(days=DISABLED_FOR + 1)
+                        uid = self.guid("user", p.id)
+                        if since < deleted <= self.truth.today and uid not in self.records()["users"]:
+                            items.append({"id": uid, "@removed": {"reason": "changed"}})
             out = page(request, items, int(q.get("$top", 0)) or None, q.get("$skiptoken"), q.get("$select"))
             if "@odata.nextLink" not in out:
                 token = base64.urlsafe_b64encode(json.dumps({"since": self.seen_as_of(0).isoformat()}).encode()).decode()
@@ -278,7 +286,7 @@ def public(item: dict, select: str | None) -> dict:
     """The item as Graph returns it: no harness-only fields, and only $select's if given."""
     out = {k: v for k, v in item.items() if not k.startswith("_")}
     if select:
-        keep = {s.strip() for s in select.split(",")} | {"id"}
+        keep = {s.strip() for s in select.split(",")} | {"id", "@removed"}
         out = {k: v for k, v in out.items() if k in keep}
     return out
 

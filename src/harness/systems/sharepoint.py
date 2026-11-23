@@ -2,7 +2,8 @@
 context lives (policies, procedures, charters, runbooks, registers, minutes, org charts).
 
 What a connector reads: /sharepoint/v1.0/sites (with ?search=), a site's drive, a
-folder's children, an item, its content (markdown here), and the drive's delta. It uses
+folder's children, an item, its content (markdown here; as in Graph, a 302 to a
+pre-authenticated download URL), and the drive's delta. It uses
 the same Graph token as Entra ID (/entra/{tenant}/oauth2/v2.0/token).
 
 Every document makes claims, each checked against the truth every day:
@@ -365,11 +366,20 @@ class SharePoint(SourceSystem):
             return public(self._item(drive, item))
 
         @r.get("/v1.0/drives/{drive}/items/{item}/content", dependencies=auth)
-        def content(drive: str, item: str):
+        def content(drive: str, item: str, request: Request):
+            """As Graph does: 302 Found to a pre-authenticated download URL (no token needed)."""
             i = self._item(drive, item)
             if "_body" not in i:
                 raise HTTPException(400, detail={"error": {"code": "invalidRequest", "message": "A folder has no content."}})
-            return Response(i["_body"], media_type="text/markdown")
+            url = str(request.url_for("download", key=self.download_key(drive, item)))
+            return Response(status_code=302, headers={"Location": url})
+
+        @r.get("/download/{key}", name="download")
+        def download(key: str):
+            for i in self.records()["items"].values():
+                if "_body" in i and self.download_key(i["_drive"], i["id"]) == key:
+                    return Response(i["_body"], media_type="text/markdown")
+            raise HTTPException(404, detail={"error": {"code": "itemNotFound", "message": "The download link has expired."}})
 
         @r.get("/v1.0/drives/{drive}/root/delta", dependencies=auth)
         def delta(drive: str, request: Request, token: str | None = None):
@@ -379,6 +389,10 @@ class SharePoint(SourceSystem):
             return {"value": items, "@odata.deltaLink": str(request.url.remove_query_params(["token"]).include_query_params(token=now))}
 
         return r
+
+    def download_key(self, drive: str, item: str) -> str:
+        """The pre-authenticated part of a download URL: good for the current day only."""
+        return hashlib.sha256(f"{self.truth.seed}:{drive}:{item}:{self.truth.today}".encode()).hexdigest()[:40]
 
     def _site(self, site_id: str) -> dict:
         for s in self.records()["sites"].values():

@@ -16,16 +16,28 @@ exactly as it would be at the real system's.
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+import asyncio
+
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from . import __version__, clock, scenarios
 from .systems import REGISTRY
-from .truth import Truth, generate
+from .truth import Truth, chance, generate
+
+CHAOS_KINDS = ("throttle", "server-error", "unavailable", "token-expired", "slow")
 
 
 class Advance(BaseModel):
     days: int
+
+
+class Chaos(BaseModel):
+    rate: float = 0.0  # share of system requests that misbehave
+    kinds: list[str] = list(CHAOS_KINDS)
+    slow_ms: int = 1500
+    seed: int = 1
 
 
 class Difficulty(BaseModel):
@@ -87,6 +99,60 @@ def create_app(truth: Truth | None = None, systems: list[str] | None = None) -> 
         app.include_router(system.router(), prefix=f"/{name}", tags=[system.title])
     app.state.truth = truth
     app.state.systems = chosen
+    app.state.chaos = {"rate": 0.0, "kinds": list(CHAOS_KINDS), "slow_ms": 1500, "seed": 1}
+    app.state.chaos_seen = {"requests": 0, **{k: 0 for k in CHAOS_KINDS}}
+
+    @app.middleware("http")
+    async def misbehave(request: Request, call_next):
+        """With chaos on, some system requests fail the way real APIs do: throttled (429 with
+        Retry-After), a server error (500), unavailable (503), an expired token (401), or
+        slow. Which ones is decided by the request's number and the seed, so a run can be
+        repeated. /harness itself always answers."""
+        c, seen = app.state.chaos, app.state.chaos_seen
+        if request.url.path.startswith("/harness") or c["rate"] <= 0:
+            return await call_next(request)
+        seen["requests"] += 1
+        n = seen["requests"]
+        if chance(c["seed"], "chaos", n) >= c["rate"] or not c["kinds"]:
+            return await call_next(request)
+        kind = c["kinds"][int(chance(c["seed"], "chaos-kind", n) * len(c["kinds"]))]
+        seen[kind] += 1
+        if kind == "slow":
+            await asyncio.sleep(c["slow_ms"] / 1000)
+            return await call_next(request)
+        status, headers, body = {
+            "throttle": (
+                429,
+                {"Retry-After": "1"},
+                {"error": {"code": "TooManyRequests", "message": "Rate limit exceeded. Retry after 1 second."}},
+            ),
+            "server-error": (500, {}, {"error": {"code": "InternalServerError", "message": "An unexpected error occurred."}}),
+            "unavailable": (
+                503,
+                {"Retry-After": "2"},
+                {"error": {"code": "ServiceUnavailable", "message": "The service is temporarily unavailable."}},
+            ),
+            "token-expired": (
+                401,
+                {"WWW-Authenticate": 'Bearer error="invalid_token", error_description="The access token expired"'},
+                {"error": {"code": "InvalidAuthenticationToken", "message": "Lifetime validation failed, the token is expired."}},
+            ),
+        }[kind]
+        return JSONResponse(body, status_code=status, headers=headers)
+
+    @app.get("/harness/chaos", tags=["harness"])
+    def get_chaos() -> dict:
+        return {**app.state.chaos, "seen": app.state.chaos_seen}
+
+    @app.put("/harness/chaos", tags=["harness"])
+    def set_chaos(body: Chaos):
+        """Make the systems misbehave: rate 0.05 fails 5% of requests, of the kinds listed."""
+        unknown = set(body.kinds) - set(CHAOS_KINDS)
+        if unknown:
+            return JSONResponse({"detail": f"unknown kinds {sorted(unknown)}; known: {list(CHAOS_KINDS)}"}, status_code=422)
+        app.state.chaos = body.model_dump()
+        app.state.chaos_seen = {"requests": 0, **{k: 0 for k in CHAOS_KINDS}}
+        return get_chaos()
 
     @app.get("/harness/status", tags=["harness"])
     def status() -> dict:

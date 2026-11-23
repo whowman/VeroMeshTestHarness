@@ -43,6 +43,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--host", default="0.0.0.0")  # noqa: S104 — a container's service
     s.add_argument("--port", type=int, default=8100)
     s.add_argument("--systems", help="comma-separated; default all")
+    s.add_argument("--chaos", type=float, default=0.0, help="share of system requests that misbehave (429, 500, 503, expired token, slow)")
     k = sub.add_parser("answer-key", help="print what VeroMesh should find")
     company(k)
     k.add_argument("-o", "--out")
@@ -65,6 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     import uvicorn
 
     app = create_app(truth, a.systems.split(",") if a.systems else None)
+    app.state.chaos["rate"] = a.chaos
     uvicorn.run(app, host=a.host, port=a.port)
     return 0
 

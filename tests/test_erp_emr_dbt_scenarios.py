@@ -37,10 +37,17 @@ def test_invoices_are_approved_within_authority(harness):
     assert client.get(f"{FSCM}/invoices").status_code == 401
     r = client.get(f"{FSCM}/invoices?limit=500&totalResults=true&q=InvoiceAmount>25000;InvoiceAmount<=50000", headers=ERP).json()
     assert r["totalResults"] > 0 and r["hasMore"] in (True, False)
-    clerks = {p.employee_id for p in truth.people.values() if any("APClerk" in h.roles for h in p.history)}
-    big = [i for i in r["items"] if i["InvoiceAmount"] > 25_000]
-    assert all(i["ApproverPersonNumber"] not in clerks for i in big)
-    assert sum(1 for i in big if i["SecondApproverPersonNumber"]) >= len(big) - 3  # a few missing co-approvals
+    clerks = {p.email.split("@")[0].upper() for p in truth.people.values() if any("APClerk" in h.roles for h in p.history)}
+    big = {i["InvoiceId"] for i in r["items"] if i["InvoiceAmount"] > 25_000}
+    hist = client.get(
+        f"{FSCM}/invoiceApprovalsAndNotificationsHistory?limit=500&q=Action=Approved;ReviewedAmount>25000;ReviewedAmount<=50000",
+        headers=ERP,
+    ).json()["items"]
+    approvers: dict[int, list[str]] = {}
+    for h in hist:
+        approvers.setdefault(h["InvoiceId"], []).append(h["Approver"])
+    assert big <= set(approvers) and not any(a in clerks for i in big for a in approvers[i])
+    assert sum(1 for i in big if len(approvers[i]) == 2) >= len(big) - 3  # a few missing co-approvals
 
 
 def test_erp_quirks_and_user_roles(harness):
@@ -57,10 +64,13 @@ def test_erp_quirks_and_user_roles(harness):
 def test_the_controller_approves_while_the_ap_manager_post_is_vacant(harness):
     client, truth = harness
     client.post("/harness/clock", json={"days": 45})  # the AP Manager left on day 20
-    managers = {p.employee_id for p in truth.people.values() if any("APManager" in h.roles for h in p.history)}
+    managers = {p.email.split("@")[0].upper() for p in truth.people.values() if any("APManager" in h.roles for h in p.history)}
     start = (truth.start + __import__("datetime").timedelta(days=31)).isoformat()  # after the ERP end-dated her account
-    r = client.get(f"{FSCM}/invoices?limit=500&q=InvoiceDate>={start};InvoiceAmount>5000;InvoiceAmount<=25000", headers=ERP).json()["items"]
-    assert r and not any(i["ApproverPersonNumber"] in managers for i in r)
+    r = client.get(
+        f"{FSCM}/invoiceApprovalsAndNotificationsHistory?limit=500&q=Action=Approved;LastUpdateDate>={start};ReviewedAmount>5000;ReviewedAmount<=25000",
+        headers=ERP,
+    ).json()["items"]
+    assert r and not any(h["Approver"] in managers for h in r)
 
 
 # ------------------------------------------------------------------ EMR

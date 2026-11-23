@@ -367,3 +367,165 @@ NICKNAMES = {
     "Daniel": "Dan",
 }
 LOCATIONS = ["Kestrel Valley Medical Center", "North Campus Clinic", "Riverside Outpatient Center", "Corporate Office"]
+
+# ---------------------------------------------------------------- the Clinician Copilot slice
+# Utilization management (prior authorization), the claims platform, claims and coverage
+# data, the Copilot's decision rules, and the semantic layer's terms.
+
+UNITS.append(
+    (
+        "UM",
+        "Utilization Management",
+        "CLIN",
+        "CC2700",
+        0.03,
+        ["Medical Director of Utilization Management", "Utilization Review Nurse", "Prior Authorization Specialist"],
+    )
+)
+TITLE_ROLES.update(
+    {
+        "Medical Director of Utilization Management": ["Clinician", "Prescriber", "ClinicalLeader", "UMDirector"],
+        "Utilization Review Nurse": ["Clinician", "UMReviewer"],
+        "Prior Authorization Specialist": ["PAIntake"],
+    }
+)
+ROLES.update(
+    {
+        "UMDirector": "Physician who decides prior authorizations above the reviewers' limit, and every denial",
+        "UMReviewer": "Nurse who approves prior authorizations within the review limit",
+        "PAIntake": "Receives and prepares prior authorization requests",
+    }
+)
+AUTHORITIES += [
+    ("UMReviewer", "ApprovePriorAuthorization", 25_000, None),
+    ("UMDirector", "ApprovePriorAuthorization", None, None),
+    ("UMDirector", "DenyPriorAuthorization", None, None),
+]
+SYSTEMS.append(("CLAIMS", "Claims and Utilization Platform", "claims", "TriZetto", "UM", "APPS", "1 - most critical", ["HIPAA"]))
+ASSETS += [
+    (
+        "claims.bronze.claims_837",
+        "bronze",
+        "CLAIMS",
+        "RCM",
+        [
+            ("claim_id", "string", "internal"),
+            ("member_id", "string", "phi"),
+            ("provider_npi", "string", "internal"),
+            ("service_date", "date", "phi"),
+            ("cpt_codes", "array<string>", "phi"),
+            ("billed_amount", "decimal(18,2)", "confidential"),
+        ],
+    ),
+    (
+        "claims.silver.claims",
+        "silver",
+        "CLAIMS",
+        "RCM",
+        [
+            ("claim_id", "string", "internal"),
+            ("individual_id", "string", "phi"),
+            ("provider_id", "string", "internal"),
+            ("service_date", "date", "phi"),
+            ("allowed_amount", "decimal(18,2)", "confidential"),
+            ("status", "string", "internal"),
+        ],
+    ),
+    (
+        "claims.silver.coverage",
+        "silver",
+        "CLAIMS",
+        "UM",
+        [
+            ("individual_id", "string", "phi"),
+            ("plan_id", "string", "internal"),
+            ("coverage_start", "date", "phi"),
+            ("coverage_end", "date", "phi"),
+            ("prior_auth_required", "boolean", "internal"),
+        ],
+    ),
+    (
+        "claims.silver.prior_authorizations",
+        "silver",
+        "CLAIMS",
+        "UM",
+        [
+            ("pa_id", "string", "internal"),
+            ("individual_id", "string", "phi"),
+            ("service_code", "string", "phi"),
+            ("requested_amount", "decimal(18,2)", "confidential"),
+            ("decision", "string", "internal"),
+            ("decided_by", "string", "internal"),
+            ("decided_at", "timestamp", "internal"),
+        ],
+    ),
+]
+LINEAGE += [
+    ("claims.bronze.claims_837", "claims.silver.claims"),
+    ("claims.silver.claims", "clinical.gold.longitudinal_patient"),
+    ("claims.silver.coverage", "claims.silver.prior_authorizations"),
+]
+KPIS.append(("PriorAuthTurnaround", "Median prior authorization decision time", "UM", "hours", "claims.silver.prior_authorizations"))
+
+# What the Clinician Copilot may do, and who must act or review. ``act``: allow (the agent
+# may), draft (it drafts; a person with the ``sign`` role signs), consult (the ``review``
+# roles decide). ``limit``: an amount above which the ``above`` roles decide. ``care``: the
+# requester must be treating the patient. ``owner``: the unit whose head owns the data or
+# content the rule is about.
+COPILOT_RULES = {
+    "SummarizePatientHistory": {"act": "allow", "care": True, "owner": "CINF"},
+    "IdentifyCareGap": {"act": "allow", "care": True, "owner": "CINF", "route": "generalPractitioner"},
+    "CrossReferenceMedications": {"act": "allow", "care": True, "owner": "PHAR", "onMajorInteraction": ["Prescriber", "Pharmacist"]},
+    "DraftMedicationOrder": {"act": "draft", "care": True, "sign": "Prescriber", "review": ["Pharmacist"], "owner": "PHAR"},
+    "DraftHighAlertMedicationOrder": {
+        "act": "draft",
+        "care": True,
+        "sign": "Prescriber",
+        "review": ["Pharmacist", "Pharmacist"],
+        "owner": "PHAR",
+    },
+    "RecommendDoseChange": {"act": "consult", "care": True, "review": ["Prescriber"], "owner": "PHAR"},
+    "ApprovePriorAuthorization": {"act": "consult", "review": ["UMReviewer"], "limit": 25_000, "above": ["UMDirector"], "owner": "UM"},
+    "DenyPriorAuthorization": {"act": "consult", "review": ["UMDirector"], "owner": "UM"},
+    "ReleaseRecordsExternally": {"act": "consult", "review": ["PrivacyOfficer"], "owner": "COMP"},
+    "ChangeCareProtocol": {"act": "consult", "review": ["ClinicalLeader"], "owner": "CINF"},
+}
+HIGH_ALERT = ["insulin glargine 100 units/mL", "warfarin 5 mg", "heparin 5,000 units"]
+MAJOR_INTERACTIONS = [("warfarin 5 mg", "aspirin 81 mg"), ("lisinopril 10 mg", "spironolactone 25 mg")]
+
+# The semantic layer: business terms, their definitions, the domain each belongs to, and
+# the lakehouse tables (and columns) that hold them.
+SEMANTIC_TERMS = [
+    (
+        "Individual",
+        "Patient/Individual",
+        "A unique person known to the organization, whatever their relationship to it",
+        ["clinical.gold.longitudinal_patient.individual_id", "claims.silver.coverage.individual_id"],
+    ),
+    (
+        "Patient",
+        "Patient/Individual",
+        "An individual in a care relationship with the organization",
+        ["clinical.silver.encounters.individual_id"],
+    ),
+    ("Encounter", "Clinical Encounter", "An interaction between a patient and a provider for care", ["clinical.silver.encounters"]),
+    ("MedicationOrder", "Clinical Encounter", "An order for a medication, signed by a prescriber", ["clinical.silver.medication_orders"]),
+    ("Practitioner", "Provider", "A person licensed to deliver care", ["clinical.silver.medication_orders.prescriber_id"]),
+    ("Provider", "Provider", "A practitioner or organization that bills for care", ["claims.silver.claims.provider_id"]),
+    ("Diagnosis", "Terminology", "A coded clinical condition (ICD-10-CM)", ["clinical.silver.encounters.primary_dx"]),
+    ("CareGap", "Terminology", "A recommended service a patient has not received", []),
+    ("Claim", "Claims/Coverage", "A request for payment for services delivered", ["claims.silver.claims"]),
+    ("Coverage", "Claims/Coverage", "The insurance plan an individual is enrolled in, and its dates", ["claims.silver.coverage"]),
+    (
+        "PriorAuthorization",
+        "Claims/Coverage",
+        "Approval required before a covered service is delivered",
+        ["claims.silver.prior_authorizations"],
+    ),
+    (
+        "SupplierInvoice",
+        "Finance",
+        "A supplier's bill for goods or services",
+        ["finance.silver.supplier_invoices", "finance.bronze.erp_invoices.amount"],
+    ),
+]
