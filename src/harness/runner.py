@@ -81,6 +81,10 @@ def identity_resolution(vm: VeroMesh, sc: dict) -> dict:
     people = vm.get("/people")
     if not people:
         raise NotYet("no people in VeroMesh: load Workday and Entra ID first")
+    # People only the "ended" source keeps (dropped while another source still refers to
+    # them) have left: they are not people working there.
+    ended = {p["id"] for p in vm.get("/people", source="ended")} if _has_source(vm, "ended") else set()
+    people = [p for p in people if p["id"] not in ended or _sources(vm, p["id"]) - {"ended"}]
     conflicts = vm.get("/conflicts", type="people")
     return {
         "people": sorted(p["id"] for p in people),
@@ -88,6 +92,19 @@ def identity_resolution(vm: VeroMesh, sc: dict) -> dict:
         "nameVariantsMerged": sorted({c["id"] for c in conflicts if c["field"] == "name"}),
         PARTIAL: "name variants only where the loaded sources disagree; ServiceNow and the EMR need their connectors",
     }
+
+
+def _has_source(vm: VeroMesh, name: str) -> bool:
+    return any(s.get("source") == name for s in vm.get("/sources"))
+
+
+def _sources(vm: VeroMesh, pid: str) -> set[str]:
+    """The sources that state a person, from VeroMesh's provenance of their name."""
+    try:
+        prov = vm.get(f"/people/{pid}/provenance")
+    except NotYet:
+        return set()
+    return {c["source"] for c in prov.get("claims", [])}
 
 
 def leaver_access(vm: VeroMesh, sc: dict) -> dict:
@@ -115,8 +132,10 @@ def decision(vm: VeroMesh, sc: dict) -> dict:
     consult = got.get("consult") or []
     out = {"outcome": got.get("outcome")}
     if consult:
+        # The first consulted role is the decision's own (above a limit: the next authority up);
+        # owners consulted for impact follow it. VeroMesh names people as {"id", "name"}.
         out["consultRole"] = consult[0]["role"]
-        out["consultPeople"] = sorted({p for c in consult for p in c.get("people", [])})
+        out["consultPeople"] = sorted(p["id"] if isinstance(p, dict) else p for p in consult[0].get("people", []))
     if got.get("outcome") == "refuse":
         reasons = " ".join(got.get("reasons") or []).lower()
         if "principal" in reasons or "acts for" in reasons or "left" in reasons:
