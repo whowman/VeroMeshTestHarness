@@ -89,7 +89,7 @@ class Erp(SourceSystem):
             for i, h in enumerate(p.history):
                 end = p.history[i + 1].start if i + 1 < len(p.history) else None
                 if p.left and (end is None or p.left < end):
-                    end = p.left + timedelta(days=END_DATE_LAG)
+                    end = p.left + timedelta(days=self.lag(END_DATE_LAG))
                 for role in h.roles:
                     if role in spans:
                         spans[role].append((p, max(h.start, p.hired), end))
@@ -125,7 +125,7 @@ class Erp(SourceSystem):
                 if over and amount > over:
                     others = [p for p in holders("FinanceApprover", day) if p.id != approver.id]
                     second = rng.choice(others) if others else None
-                    if second and self.quirk(0.03, "no-co", n):
+                    if second and self.quirk(0.03, "missing-co-approval", n):
                         defects.append(
                             defect(
                                 "missing-co-approval",
@@ -138,7 +138,7 @@ class Erp(SourceSystem):
                 if (
                     role == "APManager"
                     and limits["APClerk"].limit < amount < limits["APClerk"].limit * 1.6
-                    and self.quirk(0.08, "over-limit", n)
+                    and self.quirk(0.08, "approved-over-limit", n)
                 ):
                     clerks = holders("APClerk", day)
                     if clerks:
@@ -188,7 +188,11 @@ class Erp(SourceSystem):
                 need_approval = amount > po_limits["Buyer"].limit
                 approvers = [p for p in holders("ProcurementApprover", day) if p.id != buyer.id]
                 approver = rng.choice(approvers) if need_approval and approvers else None
-                if need_approval and "ProcurementApprover" in (buyer.at(day) or buyer.history[-1]).roles and self.quirk(0.3, "self-po", n):
+                if (
+                    need_approval
+                    and "ProcurementApprover" in (buyer.at(day) or buyer.history[-1]).roles
+                    and self.quirk(0.3, "self-approved-po", n)
+                ):
                     approver = buyer
                     defects.append(
                         defect(
@@ -215,7 +219,7 @@ class Erp(SourceSystem):
         accounts = {}
         for p in t.people.values():
             pos = p.at(t.today)
-            ended = p.left and t.today >= p.left + timedelta(days=END_DATE_LAG)
+            ended = p.left and t.today >= p.left + timedelta(days=self.lag(END_DATE_LAG))
             if pos is None and not (p.left and not ended):
                 continue
             held = (pos or p.history[-1]).roles

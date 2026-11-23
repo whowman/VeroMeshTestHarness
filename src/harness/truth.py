@@ -147,6 +147,10 @@ class Truth:
     lineage: list[tuple[str, str]]
     kpis: dict[str, Kpi]
     agents: dict[str, Agent]
+    # How hard the systems make it: scale multiplies every quirk's rate (0: none, and no
+    # sync lag, so every system agrees with the truth; 1: as described; 2: twice as many);
+    # overrides set one quirk's rate by its defect kind (e.g. {"name-variant": 0.9}).
+    difficulty: dict = field(default_factory=lambda: {"scale": 1.0, "overrides": {}})
     events: list[dict] = field(default_factory=list)  # scheduled, applied by the clock
     applied: list[dict] = field(default_factory=list)  # applied so far, in order
 
@@ -166,7 +170,9 @@ class Truth:
         return json.dumps(asdict(self), default=str, indent=1)
 
 
-def generate(profile: str = "healthcare", people: int = 2000, seed: int = 7, today: date | None = None) -> Truth:
+def generate(
+    profile: str = "healthcare", people: int = 2000, seed: int = 7, today: date | None = None, difficulty: dict | None = None
+) -> Truth:
     """The company at ``today`` (default 1 December 2026), about ``people`` strong, with
     the clock's events for the 180 days after it scheduled."""
     prof = importlib.import_module(f"harness.profiles.{profile}")
@@ -253,6 +259,8 @@ def generate(profile: str = "healthcare", people: int = 2000, seed: int = 7, tod
         kpis=kpis,
         agents=agents,
     )
+    if difficulty:
+        truth.difficulty = {"scale": float(difficulty.get("scale", 1.0)), "overrides": dict(difficulty.get("overrides", {}))}
     from .clock import schedule
 
     truth.events = schedule(truth, rng, days=180)

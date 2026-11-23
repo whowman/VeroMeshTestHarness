@@ -121,7 +121,7 @@ class ServiceNow(SourceSystem):
                 "manager": self.ref("sys_user", user_id(last.manager) if last.manager else None),
                 "location": p.location,
                 "active": "false" if p.left and p.left <= day else "true",
-                "sys_updated_on": ts(min(self.changed_on(p) + timedelta(days=USER_SYNC_DAYS), t.today)),
+                "sys_updated_on": ts(min(self.changed_on(p) + timedelta(days=self.lag(USER_SYNC_DAYS)), t.today)),
             }
         # Assignment groups: one per technical unit, its members the unit's people.
         for unit in sorted({s.technical_unit for s in t.systems.values()}):
@@ -143,7 +143,8 @@ class ServiceNow(SourceSystem):
                     }
         # The CMDB. Owners come from a monthly review: the owner as of the last review,
         # unless that person has since left (then the leaver stays named until the next).
-        review = t.start + timedelta(days=((t.today - t.start).days // CMDB_OWNER_SYNC_DAYS) * CMDB_OWNER_SYNC_DAYS)
+        period = self.lag(CMDB_OWNER_SYNC_DAYS)
+        review = t.start + timedelta(days=((t.today - t.start).days // period) * period) if period else t.today
         owners_then = self._owners_at(review)
         for s in t.systems.values():
             aid = self.sys_id("app", s.id)
@@ -158,7 +159,7 @@ class ServiceNow(SourceSystem):
                             "the CMDB names an owner who has left",
                         )
                     )
-            if s.id == NO_TECH_OWNER:
+            if s.id == NO_TECH_OWNER and self.on("no-technical-owner"):
                 technical = None
                 defects.append(defect("no-technical-owner", self.name, {"system": s.id}, "business application with no managed_by"))
             row = {
@@ -193,22 +194,23 @@ class ServiceNow(SourceSystem):
                     "child": self.ref(table, cid),
                     "type": {"value": "Runs on::Runs", "display_value": "Runs on::Runs"},
                 }
-        dup_of, dup_name = DUPLICATE
-        did = self.sys_id("app-duplicate", dup_of)
-        tables["cmdb_ci_business_app"][did] = {
-            **tables["cmdb_ci_business_app"][self.sys_id("app", dup_of)],
-            "sys_id": did,
-            "name": dup_name,
-            "number": "APM0009999",
-        }
-        defects.append(
-            defect(
-                "duplicate-ci",
-                self.name,
-                {"system": dup_of, "names": [t.systems[dup_of].name, dup_name]},
-                "the same application twice in the CMDB",
+        if self.on("duplicate-ci"):
+            dup_of, dup_name = DUPLICATE
+            did = self.sys_id("app-duplicate", dup_of)
+            tables["cmdb_ci_business_app"][did] = {
+                **tables["cmdb_ci_business_app"][self.sys_id("app", dup_of)],
+                "sys_id": did,
+                "name": dup_name,
+                "number": "APM0009999",
+            }
+            defects.append(
+                defect(
+                    "duplicate-ci",
+                    self.name,
+                    {"system": dup_of, "names": [t.systems[dup_of].name, dup_name]},
+                    "the same application twice in the CMDB",
+                )
             )
-        )
         # Change requests for the changes the clock applied, and a steady trickle of incidents.
         for i, e in enumerate(a for a in t.applied if a["kind"] in ("schema-change", "retire", "reorg")):
             cid = self.sys_id("chg", i)

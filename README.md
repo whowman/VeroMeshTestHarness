@@ -19,7 +19,7 @@ VeroMesh's connectors read the simulated systems through their real APIs (Micros
                      │ projected, with each system's lag and quirks
        ┌─────────────┼─────────────┬─────────────┬──────────────┐
        ▼             ▼             ▼             ▼              ▼
-   Entra ID      ServiceNow     Workday       Databricks     Oracle ERP, EMR (FHIR), dbt
+   Entra ID      ServiceNow     Workday       Databricks     Oracle ERP, EMR (FHIR), dbt, SharePoint
    Graph API     Table API      REST, RaaS    Unity Catalog  (systems/: each behind a mock of its real API)
        │             │
        └──────┬──────┘                       answer key: every defect,
@@ -46,10 +46,15 @@ VeroMesh's connectors read the simulated systems through their real APIs (Micros
 | Oracle Fusion ERP | `/erp` | REST API: `/fscmRestApi/resources/11.13.18.05/suppliers`, `purchaseOrders`, `invoices` (each with its approvers) and `/hcmRestApi/resources/11.13.18.05/userAccounts` (with job roles). Paging with `limit`, `offset`, `hasMore` and `totalResults=true`; filters with `q` (`Field op value;...`). Basic auth. Every invoice is approved by someone who held the authority that day | approved-over-limit, missing-co-approval, self-approved-po, leaver-retains-role |
 | EMR (Epic, FHIR R4) | `/emr` | `/fhir/Organization`, `Practitioner` (with NPI), `PractitionerRole` (department, role and clinical privileges), `Patient`, `Encounter`, `MedicationRequest`; searchset Bundles with a `next` link, `_count`, `_offset`, `identifier`, `active`, `practitioner`, `subject`, `_lastUpdated`; `/fhir/metadata`. Client credentials at `/oauth2/token`. Patients are synthetic; practitioners are the company's clinicians | practitioner-active-after-leaving, missing-npi, privilege-not-in-hr |
 | dbt | `/dbt` | The run's artifacts: `manifest.json` (sources, models with their dependencies, columns with classification, owners, tests), `run_results.json` (the nightly run), `catalog.json` | model-failing (after the breaking change; the models after it are skipped) |
+| SharePoint | `/sharepoint` | Microsoft Graph: `/v1.0/sites` (`?search=`), `sites/{id}/drive`, `drives/{id}/root/children`, `items/{id}/children`, `items/{id}`, `items/{id}/content` (markdown), `root/delta`; the Graph token from `/entra`. Sites for Finance, Clinical Operations, IT, Data Governance and People hold the delegation of authority policy, an escalation procedure, an SOP, a charter, a runbook per system, the data owner register, monthly council minutes and an org chart per unit. Each document's statements are checked against the truth every day | policy-system-mismatch, register-conflicts-with-catalog; and as the clock moves, document-names-leaver, document-outdated |
 
 Lag is part of the simulation. Workday is the record, though some terminations are entered a few days late. Entra ID is provisioned from HR nightly. ServiceNow's users sync weekly and its CMDB owners are reviewed monthly. Unity Catalog's owners change only when someone sets them. So a change lands in each system at a different time, as it would at a real company.
 
 Mock credentials (test values only): OAuth client `veromesh-connector` / `harness-secret` (Graph, Workday, Databricks, the EMR); ERP `integration.user` / `harness`; Workday refresh token `harness-workday-refresh`; ServiceNow `admin` / `harness`; Databricks token `dapi-harness-token`.
+
+## Difficulty
+
+`--difficulty` scales every quirk's rate. At `0` there are no quirks and no sync lag, so every system agrees with the truth at once: a clean baseline. At `1` the quirks are as described; at `2` there are twice as many. `--quirk KIND=RATE` (repeatable) sets one quirk by its defect kind, for example `--quirk name-variant=0.9 --quirk duplicate-ci=0`. On a running harness, use `GET` or `PUT /harness/difficulty` with `{"scale": 0, "overrides": {}}`. Some defects are facts about the company, not system quirks, and stay at every difficulty: contractors with no HR record, a vacant post, the breaking change and what it breaks, and documents written before a change.
 
 ## Scenarios
 
@@ -63,6 +68,7 @@ Mock credentials (test values only): OAuth client `veromesh-connector` / `harnes
 | prescribing-privilege | 1 | 0 | Who may sign the orders the Clinician Copilot drafts; EMR privileges HR does not give |
 | sensitive-data | 1 | 0 | Every PHI and PII column, including the one the catalog has not tagged |
 | segregation-of-duties | 1 | 0 | Purchase orders raised and approved by the same person |
+| document-claims | 1 | 0 | The statements in the SharePoint documents that are out of date or contradict the systems |
 | system-ownership | 2 | 0 | Each system's owners; the CMDB's duplicate, its application with no technical owner, its owners who have left |
 | reorganization | 2 | 45 | Whom the head of Clinical Informatics now reports to |
 | vacant-owner | 2 | 20 | Who owns the on-time payment KPI while its owner's post is vacant, and where its decisions go |
@@ -81,6 +87,16 @@ harness systems
 ```
 
 API docs: `http://localhost:8100/harness/docs`.
+
+**On one machine:** `docker compose up` (`HARNESS_PEOPLE`, `HARNESS_SEED` and `HARNESS_DIFFICULTY` set the company).
+
+**Beside VeroMesh on Kubernetes:** `deploy/helm/veromesh-test-harness`. `company.*` sets the profile, size, seed, starting day, difficulty, quirks and systems. `networkPolicy.fromNamespaces` lists the namespaces allowed to reach it, such as VeroMesh's. It runs as one replica, because the clock lives in memory, with a read-only root filesystem and no egress.
+
+```bash
+helm install harness deploy/helm/veromesh-test-harness -n veromesh-harness --create-namespace \
+  --set 'networkPolicy.fromNamespaces={veromesh}' --set company.people=20000
+# VeroMesh's connectors then use http://harness-test-harness.veromesh-harness:8100/<system>
+```
 
 ## Adding a system
 
@@ -108,4 +124,4 @@ Import it in `systems/__init__.py`. `self.quirk(rate, *keys)` decides stably whi
   - Salesforce, if order-to-cash is in scope;
   - more profiles (a payer, a manufacturer), and the systems a design partner names.
 - **Real sandboxes:** an Entra ID developer tenant and a ServiceNow developer instance. A loader writes the same truth into them, so connectors can be checked against the real APIs.
-- **Deploy:** a Helm chart, to run beside VeroMesh in VeroMesh's Azure as the simulated customer's systems.
+- **Teams messages** beside the documents (who actually decides, as against what the policy says), and documents in Word and PDF as well as markdown.

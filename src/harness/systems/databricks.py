@@ -63,7 +63,7 @@ class Databricks(SourceSystem):
                 cat, {"name": cat, "owner": ENGINEERING_GROUP, "comment": f"{cat.title()} data", "created_at": 1767225600000}
             )
             schemas.setdefault(f"{cat}.{sch}", {"name": sch, "catalog_name": cat, "full_name": f"{cat}.{sch}", "owner": ENGINEERING_GROUP})
-            if a.layer == "bronze":
+            if a.layer == "bronze" and self.on("owner-is-group"):
                 owner = ENGINEERING_GROUP
                 defects.append(
                     defect(
@@ -74,14 +74,15 @@ class Databricks(SourceSystem):
                     )
                 )
             else:
-                pid = a.owner or first_owner[a.name]
+                pid = a.owner or (first_owner[a.name] if self.lag(1) else None)
                 owner = t.people[pid].email if pid else ENGINEERING_GROUP
                 if pid and t.people[pid].left and t.people[pid].left <= t.today:
                     defects.append(defect("owner-is-leaver", self.name, {"asset": a.name, "person": pid}, "table owner has left"))
             cols = []
             for i, (col, typ, cls) in enumerate(a.columns):
-                tagged = cls if (a.name, col) != UNTAGGED else None
-                if (a.name, col) == UNTAGGED:
+                untagged = (a.name, col) == UNTAGGED and self.on("untagged-sensitive-column")
+                tagged = None if untagged else cls
+                if untagged:
                     defects.append(
                         defect(
                             "untagged-sensitive-column",
