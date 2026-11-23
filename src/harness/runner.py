@@ -85,6 +85,9 @@ def identity_resolution(vm: VeroMesh, sc: dict) -> dict:
     # them) have left: they are not people working there.
     ended = {p["id"] for p in vm.get("/people", source="ended")} if _has_source(vm, "ended") else set()
     people = [p for p in people if p["id"] not in ended or _sources(vm, p["id"]) - {"ended"}]
+    # People HR no longer lists whom an account or ERP role still holds have left too.
+    left = {f["subject"]["id"] for f in _findings(vm, "access-without-employment") or []}
+    people = [p for p in people if p["id"] not in left]
     conflicts = vm.get("/conflicts", type="people")
     return {
         "people": sorted(p["id"] for p in people),
@@ -107,8 +110,26 @@ def _sources(vm: VeroMesh, pid: str) -> set[str]:
     return {c["source"] for c in prov.get("claims", [])}
 
 
+def _findings(vm: VeroMesh, kind: str) -> list[dict] | None:
+    """VeroMesh's findings of one kind, or None when this VeroMesh has no findings API."""
+    try:
+        return vm.get("/findings", kind=kind)["findings"]
+    except NotYet:
+        return None
+
+
 def leaver_access(vm: VeroMesh, sc: dict) -> dict:
-    """People the identity system still holds (an enabled account) whom HR no longer does."""
+    """People who can still act somewhere although HR no longer lists them."""
+    found = _findings(vm, "access-without-employment")
+    if found is not None:
+        if not _has_source(vm, "workday"):
+            raise NotYet("no Workday source in VeroMesh")
+        systems = sorted({f["source"] for f in found})
+        return {
+            "people": sorted({f["subject"]["id"] for f in found}),
+            PARTIAL: f"accounts and ERP roles ({', '.join(systems) or 'none found'}); active practitioner "
+            "records need the EMR connector, and approvals made after leaving need dated ERP history",
+        }
     hr = {p["id"] for p in vm.get("/people", source="workday")}
     if not hr:
         raise NotYet("no Workday source in VeroMesh")
@@ -120,6 +141,14 @@ def leaver_access(vm: VeroMesh, sc: dict) -> dict:
         "people": sorted(p["id"] for p in iam if p.get("employeeId") and p["id"] not in hr),
         PARTIAL: "accounts only: active practitioner records and ERP roles need the EMR and ERP connectors",
     }
+
+
+def segregation_of_duties(vm: VeroMesh, sc: dict) -> dict:
+    """Purchase orders their own buyer approved, as the ERP connector reports them."""
+    found = _findings(vm, "self-approved-po")
+    if found is None or not _has_source(vm, "erp"):
+        raise NotYet("needs the ERP connector: purchase orders, buyers and approvers")
+    return {"orders": sorted({f["about"]["po"] for f in found})}
 
 
 def decision(vm: VeroMesh, sc: dict) -> dict:
@@ -158,7 +187,7 @@ ANSWERERS: dict[str, Callable[[VeroMesh, dict], dict]] = {
     "agent-principal-left": decision,
     "prescribing-privilege": missing("needs the EMR (FHIR) connector: practitioner roles and privileges"),
     "sensitive-data": missing("needs the Databricks Unity Catalog connector: columns and their tags"),
-    "segregation-of-duties": missing("needs the ERP connector: purchase orders, buyers and approvers"),
+    "segregation-of-duties": segregation_of_duties,
     "document-claims": missing("needs the SharePoint document reader"),
     "system-ownership": missing("needs the ServiceNow CMDB connector: systems and their owners"),
     "reorganization": missing("needs organization units (Workday supervisory organizations) in the model"),

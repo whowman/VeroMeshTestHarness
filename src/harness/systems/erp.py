@@ -4,7 +4,10 @@ approved each, and the ERP's own user accounts and job roles.
 What a connector reads, through Oracle's REST API:
 - /fscmRestApi/resources/11.13.18.05/suppliers, purchaseOrders and invoices, and
   invoiceApprovalsAndNotificationsHistory (who approved each invoice, by ERP user name);
-- /hcmRestApi/resources/11.13.18.05/userAccounts (each with its roles).
+- /hcmRestApi/resources/11.13.18.05/userAccounts (GUID, Username, SuspendedFlag, PersonNumber),
+  with each account's roles in the userAccountRoles child (``expand=userAccountRoles``, or
+  /userAccounts/{GUID}/child/userAccountRoles): UserRoleId, RoleId and RoleCode, as Oracle
+  gives them (no role name).
 Paging uses limit and offset, with hasMore (and totalResults=true for the count);
 filters use q, Oracle's ``Field op value;Field op value`` form. Basic authentication.
 
@@ -251,12 +254,17 @@ class Erp(SourceSystem):
                         "ERP account still active after the person left",
                     )
                 )
-            accounts[p.employee_id] = {
-                "UserId": self.sys_id("erpuser", p.id)[:16],
+            guid = self.sys_id("erpuser", p.id).replace("-", "").upper()[:32]
+            accounts[guid] = {
+                "UserId": int(self.sys_id("erpuserid", p.id).replace("-", "")[:12], 16),
                 "Username": p.email.split("@")[0].upper(),
-                "PersonNumber": p.employee_id,
                 "SuspendedFlag": False,
-                "roles": [{"RoleCode": "ORA_" + r.upper().replace(" ", "_") + "_JOB", "RoleName": r} for r in roles],
+                "PersonNumber": p.employee_id,
+                "GUID": guid,
+                "userAccountRoles": [
+                    {"UserRoleId": 300100000000000 + i, "RoleId": 5000 + list(JOB_ROLES.values()).index(r), "RoleCode": role_code(r)}
+                    for i, r in enumerate(roles)
+                ],
             }
         return {
             "suppliers": suppliers,
@@ -283,6 +291,10 @@ class Erp(SourceSystem):
         def collection(kind: str, request: Request) -> dict:
             q = request.query_params
             items = list(self.records()[kind].values())
+            if kind == "userAccounts":
+                wanted = {x.strip() for x in q.get("expand", "").split(",")}
+                if not wanted & {"userAccountRoles", "all"}:
+                    items = [{k: v for k, v in a.items() if k != "userAccountRoles"} for a in items]
             items = oracle_q(items, q.get("q", ""))
             limit, offset = min(int(q.get("limit", 25)), 500), int(q.get("offset", 0))
             chunk = items[offset : offset + limit]
@@ -305,7 +317,21 @@ class Erp(SourceSystem):
             (f"{HCM}/userAccounts", "userAccounts"),
         ):
             r.add_api_route(path, endpoint(kind), methods=["GET"], dependencies=auth, name=kind)
+
+        @r.get(f"{HCM}/userAccounts/{{guid}}/child/userAccountRoles", dependencies=auth)
+        def account_roles(guid: str) -> dict:
+            a = self.records()["userAccounts"].get(guid)
+            if a is None:
+                raise HTTPException(404, detail="Not Found")
+            items = a["userAccountRoles"]
+            return {"items": items, "count": len(items), "hasMore": False, "limit": 25, "offset": 0}
+
         return r
+
+
+def role_code(name: str) -> str:
+    """'Accounts Payable Manager' -> 'ORA_ACCOUNTS_PAYABLE_MANAGER_JOB' (Oracle's job role codes)."""
+    return "ORA_" + name.upper().replace(" ", "_") + "_JOB"
 
 
 _TERM = re.compile(r"^\s*(\w+)\s*(>=|<=|!=|=|>|<|LIKE)\s*'?(.*?)'?\s*$")
