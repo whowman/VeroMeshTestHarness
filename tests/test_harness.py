@@ -235,6 +235,7 @@ def test_status(harness):
         "dbt",
         "emr",
         "entra",
+        "governance",
         "erp",
         "servicenow",
         "sharepoint",
