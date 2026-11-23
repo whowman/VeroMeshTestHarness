@@ -2,7 +2,8 @@
 
 Events are scheduled when the company is generated: the everyday churn (hires, moves,
 leavers) and a script of the changes the gates must catch (a unit head leaving and the
-post staying vacant, a reorganization, a breaking schema change, a system retired).
+post staying vacant, a reorganization, a breaking schema change, the person an AI agent
+acts for leaving, a system retired).
 Everyday events name no person: each picks one when it is applied, from the company as
 it is that day, by a stable number, so the same seed always gives the same story.
 
@@ -23,6 +24,7 @@ SCRIPT = [
     (45, {"kind": "reorg", "unit": "CINF", "parent": "DATA"}),  # Clinical Informatics moves under Data
     (50, {"kind": "head-hired", "unit": "AP"}),  # a new AP Manager, 30 days later
     (60, {"kind": "schema-change", "asset": "finance.bronze.erp_invoices", "rename": ["amount", "invoice_amount"]}),
+    (75, {"kind": "principal-leaves", "agent": "InvoiceAssistant"}),  # the person an agent acts for leaves
     (120, {"kind": "retire", "system": "RCMS"}),
 ]
 MONTHLY = {"hire": 0.010, "move": 0.010, "leave": 0.010}  # of the headcount, a month
@@ -140,6 +142,9 @@ def _apply(truth: Truth, e: dict, day) -> dict | None:
     if kind == "head-leaves":
         head = truth.head_of(e["unit"], day)
         return head and {"kind": "leave", **_leave(truth, head, day)}
+    if kind == "principal-leaves":
+        p = truth.people[truth.agents[e["agent"]].acts_for]
+        return p.active(day) and {"kind": "leave", **_leave(truth, p, day)} or None
     if kind == "head-hired":
         unit = truth.units[e["unit"]]
         parent_head = truth.head_of(unit.parent, day) if unit.parent else None

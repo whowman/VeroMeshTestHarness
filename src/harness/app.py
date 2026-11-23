@@ -7,6 +7,8 @@ harness's own controls under /harness.
     /harness/clock    POST {"days": n}: move the company forward; returns the events applied
     /harness/answer-key  what VeroMesh should find: every system's defects, the events so far,
                       and the truth's owners, roles and authorities
+    /harness/scenarios   the questions askable today, each with its expected answer
+    /harness/score    POST VeroMesh's answers; returns what passed, with precision and recall
 
 A connector is pointed at a system's base URL (for example http://harness:8100/servicenow)
 exactly as it would be at the real system's.
@@ -17,7 +19,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-from . import __version__, clock
+from . import __version__, clock, scenarios
 from .systems import REGISTRY
 from .truth import Truth, generate
 
@@ -93,5 +95,15 @@ def create_app(truth: Truth | None = None, systems: list[str] | None = None) -> 
     @app.get("/harness/answer-key", tags=["harness"])
     def key() -> dict:
         return answer_key(truth, chosen)
+
+    @app.get("/harness/scenarios", tags=["harness"])
+    def list_scenarios() -> dict:
+        """The questions askable today, each with its expected answer."""
+        return {"today": truth.today.isoformat(), "scenarios": scenarios.scenarios(truth, chosen)}
+
+    @app.post("/harness/score", tags=["harness"])
+    def score(answers: dict) -> dict:
+        """Score VeroMesh's answers ({scenario id: {field: value}}) against today's scenarios."""
+        return {"today": truth.today.isoformat(), **scenarios.score(scenarios.scenarios(truth, chosen), answers)}
 
     return app
