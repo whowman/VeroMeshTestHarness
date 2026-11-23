@@ -37,6 +37,16 @@ PRIVILEGE = "urn:kestrel:privilege"
 MRN = "urn:kestrel:mrn"
 CLINICAL_UNITS = ("EMER", "INTM", "CARD", "PHAR", "NURS", "CINF", "CLIN")
 PATIENTS = 400
+DRUGS = [
+    "metformin 500 mg",
+    "lisinopril 10 mg",
+    "atorvastatin 20 mg",
+    "albuterol inhaler",
+    "warfarin 5 mg",
+    "aspirin 81 mg",
+    "insulin glargine 100 units/mL",
+    "spironolactone 25 mg",
+]
 
 
 def role_code(roles: list[str]) -> tuple[str, str]:
@@ -145,7 +155,8 @@ class Emr(SourceSystem):
                 "birthDate": f"{rng.randint(1935, 2015)}-{rng.randint(1, 12):02d}-{rng.randint(1, 28):02d}",
                 "generalPractitioner": [{"reference": f"Practitioner/prac-{gp.id}"}] if gp else [],
             }
-            for k in range(rng.randint(0, 3)):
+            # Patient 0 always has two orders that interact (warfarin, then aspirin).
+            for k in range(2 if i == 0 else rng.randint(0, 3)):
                 doc, pos, _ = rng.choice(clinicians)
                 start = t.today - timedelta(days=rng.randint(1, 365))
                 eid = f"enc-{i:05d}-{k}"
@@ -162,7 +173,7 @@ class Emr(SourceSystem):
                     "serviceProvider": {"reference": f"Organization/org-{pos.unit.lower()}"},
                     "period": {"start": f"{start}T08:00:00Z", "end": f"{start}T11:00:00Z"},
                 }
-                if rng.random() < 0.6 and prescribers:
+                if (i == 0 or rng.random() < 0.6) and prescribers:
                     doc = rng.choice(prescribers)[0]
                     mid = f"med-{i:05d}-{k}"
                     res["MedicationRequest"][mid] = {
@@ -170,9 +181,7 @@ class Emr(SourceSystem):
                         "id": mid,
                         "status": "active",
                         "intent": "order",
-                        "medicationCodeableConcept": {
-                            "text": rng.choice(["metformin 500 mg", "lisinopril 10 mg", "atorvastatin 20 mg", "albuterol inhaler"])
-                        },
+                        "medicationCodeableConcept": {"text": ["warfarin 5 mg", "aspirin 81 mg"][k] if i == 0 else rng.choice(DRUGS)},
                         "subject": {"reference": f"Patient/{pt}"},
                         "encounter": {"reference": f"Encounter/{eid}"},
                         "requester": {"reference": f"Practitioner/prac-{doc.id}"},

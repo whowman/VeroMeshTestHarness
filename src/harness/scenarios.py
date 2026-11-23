@@ -12,6 +12,7 @@ truth (their HR and their owners) in place of the simulated company's.
 
 from __future__ import annotations
 
+from . import copilot
 from .truth import Truth
 
 AGENT_LIMIT_ASK = 12_000  # above the AP specialist's 5,000, within the AP Manager's 50,000
@@ -203,9 +204,15 @@ def scenarios(t: Truth, systems: dict) -> list[dict]:
                 "affectedKpis": kpis,
                 "notify": notify,
                 "failingModels": sorted(d["about"]["asset"] for d in by_kind.get("model-failing", [])),
+                "staleSemanticMappings": sorted(d["about"]["mappedTo"] for d in by_kind.get("stale-mapping", [])),
             },
             since=60,
         )
+
+    # ---------------------------------------------------------------- the Clinician Copilot slice
+    out += copilot.scenarios(t, systems)
+    if (sem := copilot.semantic_context(t, systems)) is not None:
+        out.append(sem)
     return out
 
 

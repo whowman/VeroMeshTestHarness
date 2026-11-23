@@ -2,7 +2,8 @@
 approved each, and the ERP's own user accounts and job roles.
 
 What a connector reads, through Oracle's REST API:
-- /fscmRestApi/resources/11.13.18.05/suppliers, purchaseOrders and invoices;
+- /fscmRestApi/resources/11.13.18.05/suppliers, purchaseOrders and invoices, and
+  invoiceApprovalsAndNotificationsHistory (who approved each invoice, by ERP user name);
 - /hcmRestApi/resources/11.13.18.05/userAccounts (each with its roles).
 Paging uses limit and offset, with hasMore (and totalResults=true for the count);
 filters use q, Oracle's ``Field op value;Field op value`` form. Basic authentication.
@@ -102,7 +103,7 @@ class Erp(SourceSystem):
                 seen[key] = sorted({p.id: p for p, s, e in spans[role] if s <= day and (e is None or day < e)}.values(), key=lambda p: p.id)
             return seen[key]
 
-        invoices, pos_ = {}, {}
+        invoices, pos_, history = {}, {}, {}
         first = t.start - timedelta(days=HISTORY_DAYS)
         day, n = first, 0
         while day <= t.today:
@@ -171,13 +172,28 @@ class Erp(SourceSystem):
                     "InvoiceDate": day.isoformat(),
                     "DueDate": (day + timedelta(days=30)).isoformat(),
                     "ApprovalStatus": "APPROVED",
-                    "ApproverPersonNumber": approver.employee_id,
-                    "SecondApproverPersonNumber": second.employee_id if second else None,
                     "PaidFlag": (day + timedelta(days=30)) <= t.today and rng.random() < 0.95,
                     "PaidOnTime": rng.random() < 0.87,
                     "BusinessUnit": "Kestrel Valley Health BU",
                 }
                 invoices[inv["InvoiceId"]] = inv
+                # The approval history, as Oracle keeps it: one record per action, the
+                # approver by their ERP user name (userAccounts maps it to a person).
+                for step, who in enumerate([None, approver, second]):
+                    if step and who is None:
+                        continue
+                    hid = 400000 + n * 3 + step
+                    history[hid] = {
+                        "ApprovalHistoryId": hid,
+                        "InvoiceId": inv["InvoiceId"],
+                        "InvoiceNumber": inv["InvoiceNumber"],
+                        "Action": "Initiated" if step == 0 else "Approved",
+                        "Approver": None if who is None else who.email.split("@")[0].upper(),
+                        "ReviewedAmount": amount,
+                        "WorkflowType": "Invoice approval",
+                        "LastUpdateDate": f"{day}T{9 + step:02d}:00:00+00:00",
+                        "LastUpdatedBy": "FIN_APPROVAL_WORKFLOW" if who is None else who.email.split("@")[0].upper(),
+                    }
             for _ in range(rng.randint(3, 8)):
                 n += 1
                 amount = round(min(rng.lognormvariate(8.0, 1.2), 400_000), 2)
@@ -242,7 +258,13 @@ class Erp(SourceSystem):
                 "SuspendedFlag": False,
                 "roles": [{"RoleCode": "ORA_" + r.upper().replace(" ", "_") + "_JOB", "RoleName": r} for r in roles],
             }
-        return {"suppliers": suppliers, "invoices": invoices, "purchaseOrders": pos_, "userAccounts": accounts}, defects
+        return {
+            "suppliers": suppliers,
+            "invoices": invoices,
+            "invoiceApprovalsAndNotificationsHistory": history,
+            "purchaseOrders": pos_,
+            "userAccounts": accounts,
+        }, defects
 
     # ------------------------------------------------------------ the API
 
@@ -278,6 +300,7 @@ class Erp(SourceSystem):
         for path, kind in (
             (f"{FSCM}/suppliers", "suppliers"),
             (f"{FSCM}/invoices", "invoices"),
+            (f"{FSCM}/invoiceApprovalsAndNotificationsHistory", "invoiceApprovalsAndNotificationsHistory"),
             (f"{FSCM}/purchaseOrders", "purchaseOrders"),
             (f"{HCM}/userAccounts", "userAccounts"),
         ):

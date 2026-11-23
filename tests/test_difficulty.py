@@ -13,7 +13,15 @@ from harness.systems import REGISTRY
 from harness.truth import generate
 
 # Facts about the company, not quirks of a system: they stay at difficulty 0.
-FACTS = {"contractor-only-here", "vacant-supervisory-org", "schema-drift", "model-failing", "document-names-leaver", "document-outdated"}
+FACTS = {
+    "contractor-only-here",
+    "vacant-supervisory-org",
+    "schema-drift",
+    "model-failing",
+    "document-names-leaver",
+    "document-outdated",
+    "stale-mapping",
+}
 
 
 def kinds(difficulty: dict, days: int = 70) -> Counter:

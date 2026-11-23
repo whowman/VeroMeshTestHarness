@@ -3,7 +3,8 @@
 What a connector (and DataHub's Databricks ingestion) reads:
 - Unity Catalog: /api/2.1/unity-catalog/catalogs, schemas, tables (with columns,
   owner and properties) and tables/{full_name};
-- lineage: /api/2.0/lineage-tracking/table-lineage, upstreams and downstreams;
+- lineage: the system table system.access.table_lineage (through SQL), and the REST
+  endpoint /api/2.0/lineage-tracking/table-lineage with upstreams and downstreams;
 - SQL, through the Statement Execution API (/api/2.0/sql/statements): column and table
   tags from system.information_schema, and the tables' rows. The rows are simulated
   records (encounters, medication orders, invoices, workers), consistent with the truth.
@@ -192,6 +193,25 @@ class Databricks(SourceSystem):
                     "due_date": (day + timedelta(days=30)).isoformat(),
                     "approved_by": rng.choice(people).employee_id,
                     "paid_on_time": rng.random() < 0.87,
+                    "claim_id": f"CLM{rng.randrange(10**8):08d}",
+                    "member_id": f"MBR{rng.randrange(10**7):07d}",
+                    "provider_npi": doc.npi,
+                    "provider_id": doc.employee_id,
+                    "service_date": day.isoformat(),
+                    "cpt_codes": rng.choice([["99213"], ["99214", "36415"], ["93000"]]),
+                    "billed_amount": f"{rng.uniform(80, 12000):.2f}",
+                    "allowed_amount": f"{rng.uniform(60, 9000):.2f}",
+                    "status": rng.choice(["paid", "pended", "denied"]),
+                    "plan_id": rng.choice(["HMO-GOLD", "PPO-SILVER", "MEDICARE-ADV"]),
+                    "coverage_start": (day - timedelta(days=365)).isoformat(),
+                    "coverage_end": (day + timedelta(days=365)).isoformat(),
+                    "prior_auth_required": rng.random() < 0.3,
+                    "pa_id": f"PA{rng.randrange(10**7):07d}",
+                    "service_code": rng.choice(["70553", "27447", "J1745"]),
+                    "requested_amount": f"{rng.uniform(500, 90000):.2f}",
+                    "decision": rng.choice(["approved", "approved", "denied", "pended"]),
+                    "decided_by": doc.employee_id,
+                    "decided_at": f"{day}T{rng.randrange(24):02d}:30:00",
                     "month": day.replace(day=1).isoformat(),
                     "on_time_rate": round(rng.uniform(0.8, 0.95), 3),
                 }
@@ -296,6 +316,10 @@ class Databricks(SourceSystem):
                 [t["catalog_name"], t["schema_name"], t["name"], "layer", t["properties"]["layer"]]
                 for t in self.records()["tables"].values()
             ]
+        if re.fullmatch(r"(?i)select \* from system\.access\.table_lineage", s):
+            cols = ["source_table_full_name", "source_type", "target_table_full_name", "target_type", "event_time"]
+            when = f"{self.truth.today}T02:00:00.000+0000"
+            return cols, [[src, "TABLE", dst, "TABLE", when] for src, dst in self.truth.lineage]
         m = re.fullmatch(r"(?i)select \* from ([a-z_]+\.[a-z_]+\.[a-z_]+)(?: limit (\d+))?", s)
         if m:
             return self.rows(m[1], min(int(m[2] or 100), 1000))

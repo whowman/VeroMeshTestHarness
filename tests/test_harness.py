@@ -225,5 +225,6 @@ def test_status(harness):
         "erp",
         "servicenow",
         "sharepoint",
+        "stardog",
         "workday",
     }

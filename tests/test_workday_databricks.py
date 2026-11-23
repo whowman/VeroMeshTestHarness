@@ -111,7 +111,7 @@ def test_unity_catalog_tables_with_columns_and_owners(harness):
     client, truth = harness
     assert client.get("/databricks/api/2.1/unity-catalog/catalogs").status_code == 401
     cats = [c["name"] for c in client.get("/databricks/api/2.1/unity-catalog/catalogs", headers=DB).json()["catalogs"]]
-    assert cats == ["clinical", "finance", "people"]
+    assert cats == ["claims", "clinical", "finance", "people"]
     schemas = [
         s["name"] for s in client.get("/databricks/api/2.1/unity-catalog/schemas?catalog_name=finance", headers=DB).json()["schemas"]
     ]
@@ -127,7 +127,7 @@ def test_unity_catalog_tables_with_columns_and_owners(harness):
 def test_lineage_and_tags(harness):
     client, _ = harness
     lin = client.get("/databricks/api/2.0/lineage-tracking/table-lineage?table_name=clinical.gold.longitudinal_patient", headers=DB).json()
-    assert {u["tableInfo"]["name"] for u in lin["upstreams"]} == {"encounters", "medication_orders"} and lin["downstreams"] == []
+    assert {u["tableInfo"]["name"] for u in lin["upstreams"]} == {"encounters", "medication_orders", "claims"} and lin["downstreams"] == []
     r = client.post(
         "/databricks/api/2.0/sql/statements",
         headers=DB,
