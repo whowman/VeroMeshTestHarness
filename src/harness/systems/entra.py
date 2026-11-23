@@ -1,6 +1,6 @@
 """Microsoft Entra ID, through the Microsoft Graph API (v1.0).
 
-What a connector reads: users (with manager), groups and their members, service
+What a connector reads: users (with manager, or $expand=manager on the list), groups and their members, service
 principals for AI agents (with their owners), and user changes through delta queries
 (deleted users come back with an @removed annotation, as in Graph).
 Sign-in is OAuth client credentials at /entra/{tenant}/oauth2/v2.0/token, as with the
@@ -175,7 +175,21 @@ class Entra(SourceSystem):
             q = request.query_params
             items = sorted(self.records()["users"].values(), key=lambda u: u["userPrincipalName"])
             items = [u for u in items if matches(u, q.get("$filter"))]
-            return page(request, items, int(q.get("$top", 0)) or None, q.get("$skiptoken"), q.get("$select"))
+            out = page(request, items, int(q.get("$top", 0)) or None, q.get("$skiptoken"), q.get("$select"))
+            expand = q.get("$expand")
+            if expand:
+                if not expand.startswith("manager"):
+                    raise HTTPException(
+                        400, detail={"error": {"code": "BadRequest", "message": f"Expand '{expand}' is not supported here."}}
+                    )
+                inner = expand[len("manager") :].strip()
+                select = inner[len("($select=") : -1] if inner.startswith("($select=") and inner.endswith(")") else None
+                every = self.records()["users"]
+                for u in out["value"]:
+                    m = every.get(every[u["id"]]["_manager"] or "")
+                    if m is not None:  # Graph leaves the property out when there is no manager
+                        u["manager"] = {"@odata.type": "#microsoft.graph.user", **public(m, select)}
+            return out
 
         @r.get("/v1.0/users/delta", dependencies=auth)
         def users_delta(request: Request):

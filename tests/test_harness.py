@@ -118,6 +118,19 @@ def test_a_manager_and_groups(harness):
     }
 
 
+def test_users_with_their_managers_expanded(harness):
+    client, truth = harness
+    h = graph_token(client)
+    users, _ = all_pages(client, "/entra/v1.0/users?$top=200&$select=id,employeeId&$expand=manager($select=id,employeeId)", h)
+    with_manager = [u for u in users if "manager" in u]
+    assert with_manager and len(with_manager) < len(users)  # the top of the company has none
+    one = with_manager[0]
+    assert set(one["manager"]) == {"@odata.type", "id", "employeeId"}
+    direct = client.get(f"/entra/v1.0/users/{one['id']}/manager", headers=h).json()
+    assert direct["id"] == one["manager"]["id"]
+    assert client.get("/entra/v1.0/users?$expand=memberOf", headers=h).status_code == 400
+
+
 def test_agents_are_service_principals_owned_by_their_principal(harness):
     client, truth = harness
     h = graph_token(client)
