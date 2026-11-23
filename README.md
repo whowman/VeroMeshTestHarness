@@ -17,10 +17,10 @@ VeroMesh's connectors read the simulated systems through their real APIs (Micros
       │  data, KPIs, agents          │        │  schema change, ...   │
       └──────────────┬───────────────┘        └──────────────────────┘
                      │ projected, with each system's lag and quirks
-       ┌─────────────┼─────────────┬─────────────────┐
-       ▼             ▼             ▼                 ▼
-   Entra ID      ServiceNow     Workday, Databricks, ERP, EMR ...   (systems/)
-   Graph API     Table API      (each behind a mock of its real API)
+       ┌─────────────┼─────────────┬─────────────┬──────────────┐
+       ▼             ▼             ▼             ▼              ▼
+   Entra ID      ServiceNow     Workday       Databricks     ERP, EMR ... (systems/)
+   Graph API     Table API      REST, RaaS    Unity Catalog  (each behind a mock of its real API)
        │             │
        └──────┬──────┘                       answer key: every defect,
               ▼                              the events, the true owners
@@ -40,10 +40,12 @@ VeroMesh's connectors read the simulated systems through their real APIs (Micros
 | --- | --- | --- | --- |
 | Microsoft Entra ID | `/entra` | Microsoft Graph v1.0: users (with `$select`, `$filter`, `$top`, paging), managers, `memberOf`, groups and members, service principals (the AI agents) and their owners, `users/delta`; OAuth client credentials at `/entra/{tenant}/oauth2/v2.0/token` | name-variant, stale-manager, missing-mail, leaver-account-enabled, contractor-only-here |
 | ServiceNow | `/servicenow` | Table API: `sys_user`, `cmn_department`, `sys_user_group`, `sys_user_grmember`, `cmdb_ci_business_app`, `cmdb_ci_server`, `cmdb_ci_db_instance`, `cmdb_rel_ci`, `incident`, `change_request`. Encoded queries, `sysparm_fields`, `sysparm_display_value`, paging with `X-Total-Count` and `Link`; basic auth or `/oauth_token.do` | stale-user, leaver-still-active, no-technical-owner, duplicate-ci, owner-is-leaver |
+| Workday HCM | `/workday` | REST API: `/ccx/api/v1/{tenant}/workers` (with `limit`, `offset`, `search`), `workers/{id}`, `supervisoryOrganizations`. Reports as a Service: `/ccx/service/customreport2/{tenant}/{owner}/VeroMesh_Workers` and `VeroMesh_Worker_Changes` (`Updated_From`, `Updated_Through`). OAuth at `/ccx/oauth2/{tenant}/token` (refresh token or client credentials). Employees only: no contractors | retro-termination, vacant-supervisory-org, legal-and-preferred-name |
+| Databricks | `/databricks` | Unity Catalog: `/api/2.1/unity-catalog/catalogs`, `schemas`, `tables` (columns, owner, properties, paging), `tables/{full_name}`. Lineage: `/api/2.0/lineage-tracking/table-lineage`. SQL Statement Execution (`/api/2.0/sql/statements`): column and table tags from `system.information_schema`, and `SELECT * FROM <table> LIMIT n` returning simulated records (encounters, medication orders, invoices, workers) consistent with the truth. A personal access token, or OAuth at `/oidc/v1/token` | owner-is-group, owner-is-leaver, untagged-sensitive-column, schema-drift |
 
-Lag is part of the simulation. Entra ID is provisioned from HR nightly. ServiceNow's users sync weekly and its CMDB owners are reviewed monthly. So a change lands in each system at a different time, as it would at a real company.
+Lag is part of the simulation. Workday is the record, though some terminations are entered a few days late. Entra ID is provisioned from HR nightly. ServiceNow's users sync weekly and its CMDB owners are reviewed monthly. Unity Catalog's owners change only when someone sets them. So a change lands in each system at a different time, as it would at a real company.
 
-Mock credentials (test values only): Graph client `veromesh-connector` / `harness-secret`; ServiceNow `admin` / `harness`.
+Mock credentials (test values only): OAuth client `veromesh-connector` / `harness-secret` (Graph, Workday, Databricks); Workday refresh token `harness-workday-refresh`; ServiceNow `admin` / `harness`; Databricks token `dapi-harness-token`.
 
 ## Run it
 
@@ -81,8 +83,6 @@ Import it in `systems/__init__.py`. `self.quirk(rate, *keys)` decides stably whi
 ## Roadmap
 
 - **Next:**
-  - **Workday HCM:** workers, positions and supervisory organizations, a worker report, and changes. HR is VeroMesh's source of truth for people and roles, and it holds no contractors.
-  - **Databricks:** Unity Catalog with catalogs, schemas, tables and columns, owners and tags, and lineage, with real tables holding the simulated records for DataHub to ingest.
   - **A real ERP** (Odoo or ERPNext) or a mock of Oracle Fusion: suppliers, purchase orders, invoices and the ledger.
   - **A FHIR EMR** (HAPI FHIR, real software) with synthetic patients, practitioners and encounters, for the Clinician Copilot slice.
 - **Then:**

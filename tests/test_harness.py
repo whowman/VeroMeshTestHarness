@@ -217,4 +217,4 @@ def test_servicenow_quirks_and_the_clock(harness):
 def test_status(harness):
     client, _ = harness
     s = client.get("/harness/status").json()
-    assert s["organization"] == "Kestrel Valley Health" and set(s["systems"]) == {"entra", "servicenow"}
+    assert s["organization"] == "Kestrel Valley Health" and set(s["systems"]) == {"databricks", "entra", "servicenow", "workday"}
