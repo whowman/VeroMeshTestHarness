@@ -65,14 +65,14 @@ A system is one module in `src/harness/systems/` with a `SourceSystem` subclass:
 
 ```python
 class Workday(SourceSystem):
-    name = "workday"            # its path: /workday
+    name = "workday"  # its path: /workday
     title = "Workday HCM (REST and RaaS)"
 
-    def project(self):          # the truth, as this system holds it today
-        records, defects = {...}, [defect("...", self.name, {...}, "...")]
+    def project(self):  # the truth, as this system holds it today
+        records, defects = {}, [defect("...", self.name, {}, "...")]
         return records, defects
 
-    def router(self):           # a FastAPI router mocking the system's real API
+    def router(self):  # a FastAPI router mocking the system's real API
         ...
 ```
 
