@@ -1,0 +1,24 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[test]"
+      - run: ruff check . && ruff format --check .
+      - run: pytest -q
+      - name: The image builds and serves
+        run: |
+          docker build -q -t veromesh/test-harness:ci .
+          docker run -d --name harness -p 8100:8100 veromesh/test-harness:ci serve --people 500
+          for _ in $(seq 30); do curl -fs localhost:8100/harness/status && break; sleep 1; done
+          curl -fs localhost:8100/harness/status
