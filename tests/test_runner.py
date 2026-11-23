@@ -43,6 +43,8 @@ def fake_veromesh(truth, *, people=None, decision=None):
             return httpx.Response(200, json=rows)
         if path == "/conflicts":
             return httpx.Response(200, json=[])
+        if path == "/sources":
+            return httpx.Response(200, json=[{"source": "workday"}, {"source": "entra"}])
         if path == "/decisions/check":
             body = json.loads(request.content)
             if decision is None:

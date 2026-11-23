@@ -81,6 +81,10 @@ def identity_resolution(vm: VeroMesh, sc: dict) -> dict:
     people = vm.get("/people")
     if not people:
         raise NotYet("no people in VeroMesh: load Workday and Entra ID first")
+    # People only the "ended" source keeps (dropped while another source still refers to
+    # them) have left: they are not people working there.
+    ended = {p["id"] for p in vm.get("/people", source="ended")} if _has_source(vm, "ended") else set()
+    people = [p for p in people if p["id"] not in ended or _sources(vm, p["id"]) - {"ended"}]
     conflicts = vm.get("/conflicts", type="people")
     return {
         "people": sorted(p["id"] for p in people),
@@ -88,6 +92,19 @@ def identity_resolution(vm: VeroMesh, sc: dict) -> dict:
         "nameVariantsMerged": sorted({c["id"] for c in conflicts if c["field"] == "name"}),
         PARTIAL: "name variants only where the loaded sources disagree; ServiceNow and the EMR need their connectors",
     }
+
+
+def _has_source(vm: VeroMesh, name: str) -> bool:
+    return any(s.get("source") == name for s in vm.get("/sources"))
+
+
+def _sources(vm: VeroMesh, pid: str) -> set[str]:
+    """The sources that state a person, from VeroMesh's provenance of their name."""
+    try:
+        prov = vm.get(f"/people/{pid}/provenance")
+    except NotYet:
+        return set()
+    return {c["source"] for c in prov.get("claims", [])}
 
 
 def leaver_access(vm: VeroMesh, sc: dict) -> dict:
