@@ -115,8 +115,10 @@ def decision(vm: VeroMesh, sc: dict) -> dict:
     consult = got.get("consult") or []
     out = {"outcome": got.get("outcome")}
     if consult:
+        # The first consulted role is the decision's own (above a limit: the next authority up);
+        # owners consulted for impact follow it. VeroMesh names people as {"id", "name"}.
         out["consultRole"] = consult[0]["role"]
-        out["consultPeople"] = sorted({p for c in consult for p in c.get("people", [])})
+        out["consultPeople"] = sorted(p["id"] if isinstance(p, dict) else p for p in consult[0].get("people", []))
     if got.get("outcome") == "refuse":
         reasons = " ".join(got.get("reasons") or []).lower()
         if "principal" in reasons or "acts for" in reasons or "left" in reasons:

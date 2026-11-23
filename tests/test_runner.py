@@ -86,7 +86,13 @@ def test_decisions_are_put_to_the_check_and_scored(company):
     def decide(body):
         if body["amount"] <= 5000:
             return {"outcome": "allow", "consult": []}
-        return {"outcome": "consult", "consult": [{"role": "APManager", "people": [manager.employee_id]}]}
+        return {
+            "outcome": "consult",
+            "consult": [
+                {"role": "APManager", "people": [{"id": manager.employee_id, "name": manager.name}]},
+                {"role": "Controller", "people": [{"id": "someone-else", "name": "Someone Else"}]},
+            ],
+        }
 
     report = run(fake_veromesh(truth, decision=decide), h)
     results = {r["id"]: r for r in report.score["results"]}
