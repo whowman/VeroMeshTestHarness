@@ -105,6 +105,18 @@ Which requests fail depends only on their order and the seed, so a connector fai
 
 A role with no one in it today goes to the head of the unit that owns the rule.
 
+### Running the scenarios against VeroMesh
+
+`harness run` puts today's scenarios to VeroMesh through its REST API, as an agent or a steward would, and scores the answers. It knows only the questions; VeroMesh answers from what its connectors loaded.
+
+```bash
+veromesh-connect workday import --url http://localhost:8100/workday --tenant kvh
+veromesh-connect entra import --tenant kvh --graph http://localhost:8100/entra --login http://localhost:8100/entra --role-group-prefix SG-
+harness run --veromesh http://localhost:8700 --token "$STEWARD_TOKEN" -o report.json
+```
+
+Each scenario is reported as **passed**, **wrong** (with precision and recall, and what is missing or extra), or **not yet**, naming what VeroMesh lacks, usually the connector for the system that holds the facts. An answer that covers only part of the question says so (**partial**). People may be answered in any identifier the systems use (employee ID, email, or the sign-in name); the scorer translates them.
+
 ## Run it
 
 ```bash
@@ -151,7 +163,7 @@ Import it in `systems/__init__.py`. `self.quirk(rate, *keys)` decides stably whi
 ## Roadmap
 
 - **Next:**
-  - a runner that puts each scenario to VeroMesh's API and posts its answers to `/harness/score`, once VeroMesh has connectors for these systems;
+  - answerers for more scenarios as VeroMesh gains connectors (ServiceNow CMDB, ERP, EMR, Databricks) and the Clinician Copilot context;
   - Salesforce, if order-to-cash is in scope;
   - more profiles (a payer, a manufacturer), and the systems a design partner names.
 - **Real sandboxes:** an Entra ID developer tenant and a ServiceNow developer instance. A loader writes the same truth into them, so connectors can be checked against the real APIs.

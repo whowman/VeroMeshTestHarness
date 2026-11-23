@@ -52,7 +52,16 @@ def scenarios(t: Truth, systems: dict) -> list[dict]:
         {
             "people": sorted(p.id for p in t.active_people()),
             "noHrRecord": sorted(p.id for p in t.active_people() if p.worker_type == "contractor"),
-            "nameVariantsMerged": sorted({d["about"]["person"] for d in by_kind.get("name-variant", [])}),
+            # Shown by a short name in Entra ID (a nickname) or in Workday (a preferred name),
+            # while ServiceNow and the EMR carry the legal name: two names for one person.
+            "nameVariantsMerged": sorted(
+                {
+                    d["about"]["person"]
+                    for kind in ("name-variant", "legal-and-preferred-name")
+                    for d in by_kind.get(kind, [])
+                    if t.people[d["about"]["person"]].active(t.today)
+                }
+            ),
         },
     )
     consult_role = "APManager" if _holders(t, "APManager") else "FinanceApprover"
@@ -227,8 +236,32 @@ def _downstream(t: Truth, asset: str) -> list[str]:
     return sorted(out)
 
 
-def score(expected: list[dict], answers: dict) -> dict:
-    """Compare VeroMesh's answers ({scenario id: {field: value}}) with the expected ones."""
+def aliases(t: Truth) -> dict[str, str]:
+    """Every identifier the systems use for a person (employee ID, email, the email's local
+    part, in any case) -> the person's ID in the truth. VeroMesh answers in the IDs it was
+    given, so the scorer translates them before comparing."""
+    out: dict[str, str] = {}
+    for p in t.people.values():
+        for alias in (p.id, p.employee_id, p.email, p.email.split("@")[0]):
+            out[alias.lower()] = p.id
+    return out
+
+
+def _translate(value, names: dict[str, str]):
+    if isinstance(value, str):
+        return names.get(value.lower(), value)
+    if isinstance(value, list):
+        return [_translate(v, names) for v in value]
+    if isinstance(value, dict):
+        return {_translate(k, names) if isinstance(k, str) else k: _translate(v, names) for k, v in value.items()}
+    return value
+
+
+def score(expected: list[dict], answers: dict, names: dict[str, str] | None = None) -> dict:
+    """Compare VeroMesh's answers ({scenario id: {field: value}}) with the expected ones.
+    With ``names`` (from ``aliases``), people may be named by any identifier the systems use."""
+    if names:
+        answers = {sid: _translate(a, names) if isinstance(a, dict) else a for sid, a in answers.items()}
     results = []
     for sc in expected:
         got = answers.get(sc["id"])
