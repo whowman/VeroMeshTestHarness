@@ -62,7 +62,11 @@ To write: the defect kinds by system, and which VeroMesh finding each should pro
 
 # Scenarios and scoring
 
-`GET /harness/scenarios` lists today's questions with their expected answers. Post VeroMesh's answers to `POST /harness/score` as `{scenario id: {field: value}}`; the score gives each field right or wrong, and precision and recall for lists.
+`GET /harness/scenarios` lists today's questions with their expected answers. Post VeroMesh's answers to `POST /harness/score` as `{scenario id: {field: value}}`; the score gives each field right or wrong, and precision and recall for lists. People may be named by any identifier the systems use: employee ID, email or sign-in name.
+
+## Running them against VeroMesh
+
+`harness run --veromesh <URL> --token <steward token> -o report.json` does both steps: it asks VeroMesh each question through its API and scores the answers. Load VeroMesh first with its connectors (Workday and Entra ID today). The report lists each scenario by gate as passed, wrong (with what is missing or extra), or not yet (with what VeroMesh lacks), and marks partial answers.
 
 To write: the scenario list by gate, with the answer format for each.
 

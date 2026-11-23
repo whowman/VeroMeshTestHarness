@@ -200,7 +200,10 @@ def create_app(truth: Truth | None = None, systems: list[str] | None = None) -> 
 
     @app.post("/harness/score", tags=["harness"])
     def score(answers: dict) -> dict:
-        """Score VeroMesh's answers ({scenario id: {field: value}}) against today's scenarios."""
-        return {"today": truth.today.isoformat(), **scenarios.score(scenarios.scenarios(truth, chosen), answers)}
+        """Score VeroMesh's answers ({scenario id: {field: value}}) against today's scenarios.
+        People may be named by any identifier the systems use: employee ID, email, or the
+        email's local part (as for an account with no employee ID)."""
+        expected = scenarios.scenarios(truth, chosen)
+        return {"today": truth.today.isoformat(), **scenarios.score(expected, answers, scenarios.aliases(truth))}
 
     return app

@@ -1,15 +1,17 @@
-"""harness serve | answer-key | systems
+"""harness serve | answer-key | systems | run
 
 harness serve --people 2000 --seed 7 --port 8100 [--days 30] [--systems entra,servicenow]
                   [--difficulty 0|1|2] [--quirk name-variant=0.9 ...]
 harness answer-key --people 2000 --seed 7 --days 70 -o key.json
 harness systems
+harness run --veromesh http://localhost:8700 [--harness http://localhost:8100] [--token ...] [-o report.json]
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 
 from . import clock
@@ -48,7 +50,15 @@ def main(argv: list[str] | None = None) -> int:
     company(k)
     k.add_argument("-o", "--out")
     sub.add_parser("systems", help="list the simulated systems")
+    r = sub.add_parser("run", help="put today's scenarios to VeroMesh and score its answers")
+    r.add_argument("--veromesh", default=os.environ.get("VEROMESH_API", "http://localhost:8700"))
+    r.add_argument("--token", default=os.environ.get("VEROMESH_TOKEN"), help="a token with the steward role")
+    r.add_argument("--harness", default=os.environ.get("HARNESS_URL", "http://localhost:8100"))
+    r.add_argument("-o", "--out", help="write the answers, gaps and score as JSON")
     a = ap.parse_args(argv)
+
+    if a.cmd == "run":
+        return run_scenarios(a)
 
     if a.cmd == "systems":
         for name, cls in sorted(REGISTRY.items()):
@@ -69,6 +79,31 @@ def main(argv: list[str] | None = None) -> int:
     app.state.chaos["rate"] = a.chaos
     uvicorn.run(app, host=a.host, port=a.port)
     return 0
+
+
+def run_scenarios(a, veromesh_http=None, harness_http=None) -> int:
+    import httpx
+
+    from .runner import VeroMesh, run
+
+    vm = VeroMesh(veromesh_http or httpx.Client(timeout=120), a.veromesh.rstrip("/"), a.token)
+    report = run(vm, harness_http or httpx.Client(timeout=120), a.harness.rstrip("/"))
+    print("\n".join(report.lines()))
+    if a.out:
+        with open(a.out, "w") as f:
+            json.dump(
+                {
+                    "today": report.today,
+                    "answers": report.answers,
+                    "notYet": report.not_yet,
+                    "partial": report.partial,
+                    "errors": report.errors,
+                    "score": report.score,
+                },
+                f,
+                indent=1,
+            )
+    return 0 if not report.errors else 1
 
 
 if __name__ == "__main__":
