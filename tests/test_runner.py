@@ -117,3 +117,25 @@ def test_the_command_writes_a_report(company, tmp_path, capsys):
     saved = json.loads(out.read_text())
     assert set(saved) == {"today", "answers", "notYet", "partial", "errors", "score"}
     assert "Gate 1:" in capsys.readouterr().out
+
+
+def test_without_the_model_the_agent_acts_on_permission(company):
+    truth, h = company
+    report = run(None, h, without_model=True)
+    assert report.answers["agent-within-limit"] == {"outcome": "allow"}
+    assert report.answers["agent-over-limit"] == {"outcome": "allow"}  # wrong: it should consult
+    assert "no organizational context" in report.not_yet["identity-resolution"]
+    passed = {r["id"] for r in report.score["results"] if r["passed"]}
+    assert "agent-within-limit" in passed and "agent-over-limit" not in passed
+
+
+def test_the_tier1_measures(company, tmp_path, capsys):
+    truth, h = company
+    vm = fake_veromesh(truth, decision=lambda body: {"outcome": "allow"})
+    out = tmp_path / "measures.json"
+    args = cli.argparse.Namespace(veromesh="http://vm", token=None, harness="", out=str(out))
+    assert cli.run_measures(args, veromesh_http=vm.http, harness_http=h) == 0
+    got = json.loads(out.read_text())
+    assert got["M1"]["withModel"]["of"] == got["M1"]["withoutModel"]["of"] > 0
+    assert got["M5"]["scenarios"] and "M2" not in got  # the fake has no model measures
+    assert "M1 context question accuracy" in capsys.readouterr().out

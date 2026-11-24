@@ -55,10 +55,17 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--token", default=os.environ.get("VEROMESH_TOKEN"), help="a token with the steward role")
     r.add_argument("--harness", default=os.environ.get("HARNESS_URL", "http://localhost:8100"))
     r.add_argument("-o", "--out", help="write the answers, gaps and score as JSON")
+    m = sub.add_parser("measures", help="Tier 1 measures: today's scenarios with and without the model, M2 and M6")
+    m.add_argument("--veromesh", default=os.environ.get("VEROMESH_API", "http://localhost:8700"))
+    m.add_argument("--token", default=os.environ.get("VEROMESH_TOKEN"), help="a token with the steward role")
+    m.add_argument("--harness", default=os.environ.get("HARNESS_URL", "http://localhost:8100"))
+    m.add_argument("-o", "--out", help="write the measures as JSON")
     a = ap.parse_args(argv)
 
     if a.cmd == "run":
         return run_scenarios(a)
+    if a.cmd == "measures":
+        return run_measures(a)
 
     if a.cmd == "systems":
         for name, cls in sorted(REGISTRY.items()):
@@ -104,6 +111,48 @@ def run_scenarios(a, veromesh_http=None, harness_http=None) -> int:
                 indent=1,
             )
     return 0 if not report.errors else 1
+
+
+def run_measures(a, veromesh_http=None, harness_http=None) -> int:
+    import httpx
+
+    from .runner import NotYet, VeroMesh, measures, run
+
+    vm = VeroMesh(veromesh_http or httpx.Client(timeout=120), a.veromesh.rstrip("/"), a.token)
+    h = harness_http or httpx.Client(timeout=120)
+    with_model = run(vm, h, a.harness.rstrip("/"))
+    without = run(None, h, a.harness.rstrip("/"), without_model=True)
+    extra = {}
+    for key, path in (("model", "/measures/model"), ("decisions", "/decisions/measures")):
+        try:
+            extra[key] = vm.get(path)
+        except (NotYet, httpx.HTTPError):
+            extra[key] = None
+    got = measures(with_model, without, extra["model"], extra["decisions"])
+
+    def pct(x):
+        return "n/a" if x is None else f"{x:.0%}"
+
+    m1, m5 = got["M1"], got["M5"]
+    print(f"Tier 1 measures on {got['today']}")
+    print(
+        f"  M1 context question accuracy: {m1['withModel']['passed']} of {m1['withModel']['of']} "
+        f"({pct(m1['withModel']['share'])}) with the model, {m1['withoutModel']['passed']} "
+        f"({pct(m1['withoutModel']['share'])}) without"
+    )
+    print(
+        f"  M5 cross-team impacts routed: {m5['withModel']['passed']} of {m5['withModel']['of']} with the model, "
+        f"{m5['withoutModel']['passed']} without"
+    )
+    if got.get("M2"):
+        print(f"  M2 facts sourced automatically: {pct(got['M2']['value'])}")
+    if got.get("M6"):
+        for src, lat in sorted(got["M6"]["bySource"].items()):
+            print(f"  M6 change latency, {src}: median {lat['median']} h, 90th percentile {lat['p90']} h")
+    if a.out:
+        with open(a.out, "w") as f:
+            json.dump(got, f, indent=1)
+    return 0
 
 
 if __name__ == "__main__":
