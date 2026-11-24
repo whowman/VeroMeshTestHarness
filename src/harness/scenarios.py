@@ -96,12 +96,18 @@ def scenarios(t: Truth, systems: dict) -> list[dict]:
         "leaver-access",
         1,
         "People who have left but can still act somewhere",
-        "List people who have left and still have an enabled account, an active practitioner record or an ERP role.",
+        "List people who have left and still have an enabled account, an active practitioner record, an ERP role or an ITSM seat.",
         {
             "people": sorted(
                 {
                     d["about"]["person"]
-                    for k in ("leaver-account-enabled", "practitioner-active-after-leaving", "leaver-retains-role", "leaver-still-active")
+                    for k in (
+                        "leaver-account-enabled",
+                        "practitioner-active-after-leaving",
+                        "leaver-retains-role",
+                        "leaver-still-active",
+                        "agent-still-enabled",
+                    )
                     for d in by_kind.get(k, [])
                     if "person" in d["about"]
                 }
