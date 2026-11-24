@@ -122,6 +122,12 @@ harness run --veromesh http://localhost:8700 --token "$STEWARD_TOKEN" -o report.
 
 Each scenario is reported as **passed**, **wrong** (with precision and recall, and what is missing or extra), or **not yet**, naming what VeroMesh lacks, usually the connector for the system that holds the facts. An answer that covers only part of the question says so (**partial**). People may be answered in any identifier the systems use (employee ID, email, or the sign-in name); the scorer translates them.
 
+`harness measures` produces the position paper's Tier 1 measures from the same scenarios. It runs them with VeroMesh and again without the model: the same agent acting on its system permission alone, with nothing to look up. Both runs are scored alike, which gives M1 (accuracy with and without) and M5 (cross-team impacts routed to the right owner). It then adds M2 (share of facts sourced automatically) and M6 (change latency) from VeroMesh's `GET /api/v1/measures/model`.
+
+```bash
+harness measures --veromesh http://localhost:8700 --token "$STEWARD_TOKEN" -o measures.json
+```
+
 ## Run it
 
 ```bash

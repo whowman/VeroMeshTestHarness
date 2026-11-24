@@ -292,11 +292,28 @@ def _why(r: dict) -> str:
     return "; ".join(parts)
 
 
-def run(vm: VeroMesh, harness: httpx.Client, harness_base: str = "") -> Report:
+# ---------------------------------------------------------------- without the model (M1, M5)
+
+#: Scenarios that are an agent's request: without the model, an agent decides them on its
+#: system permission alone (it may touch the payables system, so it acts).
+AGENT_REQUESTS = ("agent-within-limit", "agent-over-limit", "agent-principal-left", "objective-tradeoff")
+#: Scenarios about routing an impact across teams to the right owner (M5).
+CROSS_TEAM = ("agent-over-limit", "objective-tradeoff", "capability-degraded", "vacant-owner", "breaking-change")
+
+
+def baseline(vm: VeroMesh | None, sc: dict) -> dict:
+    """The same agent without the organizational model: it acts on what IAM lets it touch,
+    and has nothing to look up who owns, approves or must be consulted."""
+    if sc["id"] in AGENT_REQUESTS:
+        return {"outcome": "allow"}
+    raise NotYet("without the model: no organizational context to look this up in")
+
+
+def run(vm: VeroMesh | None, harness: httpx.Client, harness_base: str = "", *, without_model: bool = False) -> Report:
     listed = harness.get(f"{harness_base}/harness/scenarios").json()
     report = Report(today=listed["today"])
     for sc in listed["scenarios"]:
-        answer = ANSWERERS.get(sc["id"], missing("no answerer for this scenario yet"))
+        answer = baseline if without_model else ANSWERERS.get(sc["id"], missing("no answerer for this scenario yet"))
         try:
             got = answer(vm, sc)
             if PARTIAL in got:
@@ -310,3 +327,35 @@ def run(vm: VeroMesh, harness: httpx.Client, harness_base: str = "") -> Report:
     r.raise_for_status()
     report.score = r.json()
     return report
+
+
+def measures(with_model: Report, without: Report, model: dict | None = None, decisions: dict | None = None) -> dict:
+    """The position paper's Tier 1 measures from one day's runs: M1 (scenario accuracy with and
+    without the model; the harness's scenarios stand in for the SME question set), M5 (cross-team
+    impacts routed to the right owner), and M2 and M6 from VeroMesh's own provenance."""
+
+    def rate(report: Report, ids: tuple[str, ...] | None = None) -> dict:
+        rs = [r for r in report.score.get("results", []) if ids is None or r["id"] in ids]
+        n = sum(r["passed"] for r in rs)
+        return {"passed": n, "of": len(rs), "share": round(n / len(rs), 3) if rs else None}
+
+    out = {
+        "today": with_model.today,
+        "M1": {
+            "name": "Context question accuracy, with and without the model",
+            "withModel": rate(with_model),
+            "withoutModel": rate(without),
+        },
+        "M5": {
+            "name": "Cross-team impacts flagged and routed to the right owner",
+            "scenarios": [r["id"] for r in with_model.score.get("results", []) if r["id"] in CROSS_TEAM],
+            "withModel": rate(with_model, CROSS_TEAM),
+            "withoutModel": rate(without, CROSS_TEAM),
+        },
+    }
+    if model:
+        out["M2"] = model.get("M2")
+        out["M6"] = model.get("M6")
+    if decisions:
+        out["decisionLog"] = decisions
+    return out
