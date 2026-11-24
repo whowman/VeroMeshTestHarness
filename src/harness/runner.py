@@ -92,8 +92,9 @@ def identity_resolution(vm: VeroMesh, sc: dict) -> dict:
     return {
         "people": sorted(p["id"] for p in people),
         "noHrRecord": sorted(p["id"] for p in people if not p.get("employeeId")),
-        "nameVariantsMerged": sorted({c["id"] for c in conflicts if c["field"] == "name"}),
-        PARTIAL: "name variants only where the loaded sources disagree; ServiceNow and the EMR need their connectors",
+        # Name variants of the people working there (a leaver's two names are not the question).
+        "nameVariantsMerged": sorted({c["id"] for c in conflicts if c["field"] == "name"} & {p["id"] for p in people}),
+        PARTIAL: "name variants only where the loaded sources disagree; the EMR needs its connector",
     }
 
 
@@ -216,6 +217,43 @@ def breaking_change(vm: VeroMesh, sc: dict) -> dict:
     }
 
 
+def system_ownership(vm: VeroMesh, sc: dict) -> dict:
+    """Each system's business and technical owner, and the CMDB records that disagree."""
+    try:
+        systems = vm.get("/systems", source="servicenow")
+    except NotYet:
+        systems = []
+    if not systems:
+        raise NotYet("needs the ServiceNow CMDB connector: systems and their owners")
+    fills: dict[str, list[str]] = {}
+    for p in vm.get("/people"):
+        roles = p.get("rolesFilled") or []
+        for r in roles if isinstance(roles, list) else [roles]:
+            fills.setdefault(r, []).append(p["id"])
+
+    def who(role):
+        return sorted(fills.get(role) or [None])[0] if role else None
+
+    dups = _findings(vm, "duplicate-system") or []
+    dup_extra = {r for f in dups for r in f["about"]["records"][1:]}
+    left = _findings(vm, "owner-has-left") or []
+    field = {"businessOwner": "owned_by", "technicalOwner": "managed_by"}
+    return {
+        "owners": {
+            s["id"]: {"business": who(s.get("businessOwner")), "technical": who(s.get("technicalOwner"))}
+            for s in systems
+            if s["id"] not in dup_extra
+        },
+        "duplicateRecords": sorted(f["about"]["records"][0] for f in dups),
+        "missingTechnicalOwner": sorted(s["id"] for s in systems if not s.get("technicalOwner") and s["id"] not in dup_extra),
+        "ownerHasLeft": sorted(
+            f"{f['subject']['id']}.{field[f['about']['field']]}"
+            for f in left
+            if f["subject"].get("type") == "systems" and f["about"]["field"] in field
+        ),
+    }
+
+
 def missing(what: str) -> Callable[[VeroMesh, dict], dict]:
     def answer(vm: VeroMesh, sc: dict) -> dict:
         raise NotYet(what)
@@ -233,10 +271,10 @@ ANSWERERS: dict[str, Callable[[VeroMesh, dict], dict]] = {
     "sensitive-data": missing("needs the Databricks Unity Catalog connector: columns and their tags"),
     "segregation-of-duties": segregation_of_duties,
     "objective-tradeoff": tradeoff,
+    "system-ownership": system_ownership,
     "breaking-change": breaking_change,
     "capability-degraded": capability_health,
     "document-claims": missing("needs the SharePoint document reader"),
-    "system-ownership": missing("needs the ServiceNow CMDB connector: systems and their owners"),
     "reorganization": missing("needs organization units (Workday supervisory organizations) in the model"),
     "vacant-owner": missing("needs KPIs and their owners (the governance workbook or catalog) in the model"),
     "semantic-context": missing("needs the semantic layer (Stardog) and catalog connectors"),

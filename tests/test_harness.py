@@ -237,6 +237,7 @@ def test_status(harness):
         "entra",
         "governance",
         "erp",
+        "halo",
         "servicenow",
         "sharepoint",
         "stardog",
