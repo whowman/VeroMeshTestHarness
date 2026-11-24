@@ -55,8 +55,13 @@ def test_erp_quirks_and_user_roles(harness):
     key = client.get("/harness/answer-key").json()
     kinds = {d["kind"] for d in key["defects"] if d["system"] == "erp"}
     assert {"approved-over-limit", "self-approved-po"} <= kinds
-    accounts = client.get("/erp/hcmRestApi/resources/11.13.18.05/userAccounts?limit=500", headers=ERP).json()["items"]
-    assert any(r["RoleName"] == "Accounts Payable Manager" for a in accounts for r in a["roles"])
+    url = "/erp/hcmRestApi/resources/11.13.18.05/userAccounts"
+    plain = client.get(f"{url}?limit=500", headers=ERP).json()["items"]
+    assert plain and all("userAccountRoles" not in a for a in plain)  # a child: only when expanded
+    accounts = client.get(f"{url}?limit=500&expand=userAccountRoles", headers=ERP).json()["items"]
+    assert any(r["RoleCode"] == "ORA_ACCOUNTS_PAYABLE_MANAGER_JOB" for a in accounts for r in a["userAccountRoles"])
+    one = client.get(f"{url}/{accounts[0]['GUID']}/child/userAccountRoles", headers=ERP).json()["items"]
+    assert one == accounts[0]["userAccountRoles"]
     pos = client.get(f"{FSCM}/purchaseOrders?limit=5&q=Status=OPEN", headers=ERP).json()
     assert pos["items"] and all(p["Status"] == "OPEN" for p in pos["items"])
 
