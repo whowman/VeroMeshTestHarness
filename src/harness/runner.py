@@ -128,7 +128,7 @@ def leaver_access(vm: VeroMesh, sc: dict) -> dict:
         systems = sorted({f["source"] for f in found})
         return {
             "people": sorted({f["subject"]["id"] for f in found}),
-            PARTIAL: f"accounts and ERP roles ({', '.join(systems) or 'none found'}); active practitioner "
+            PARTIAL: f"systems that still let them act ({', '.join(systems) or 'none found'}); active practitioner "
             "records need the EMR connector, and approvals made after leaving need dated ERP history",
         }
     hr = {p["id"] for p in vm.get("/people", source="workday")}
