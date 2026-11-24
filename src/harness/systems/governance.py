@@ -41,6 +41,15 @@ POLICY = "DelegationOfAuthorityPolicy"
 CO_APPROVER = {"APManager": "FinanceApprover", "FinanceApprover": "Executive", "ProcurementApprover": "FinanceApprover"}
 # What each agent is built to do (its registration in the workbook).
 AGENT_ACTIONS = {"InvoiceAssistant": ["ApproveSupplierInvoice"], "ProcurementAgent": ["RaisePurchaseOrder"]}
+# The process each agent action belongs to, and its owner role.
+PROCESSES = {
+    "InvoiceApproval": ("Supplier invoice approval", "APManager"),
+    "Purchasing": ("Purchasing", "ProcurementApprover"),
+}
+ACTION_PROCESS = {"ApproveSupplierInvoice": "InvoiceApproval", "RaisePurchaseOrder": "Purchasing"}
+# Impact map: action -> (KPI it moves, materiality threshold, unit). Below the threshold the
+# agent acts and informs the KPI's owner; above it, it consults them first.
+IMPACTS = {"ApproveSupplierInvoice": ("OnTimePaymentRate", 200, "invoices per day")}
 ACTION_NAMES = {
     "ApproveSupplierInvoice": "Approve a supplier invoice",
     "RaisePurchaseOrder": "Raise a purchase order",
@@ -87,7 +96,35 @@ class Governance(SourceSystem):
             }
         ]
         actions = sorted({a.action for a in t.authorities})
-        sheets["Actions"] = [{"ID": a, "Name": ACTION_NAMES.get(a, a)} for a in actions]
+
+        def owner_role(person_id: str | None) -> str | None:
+            p = t.people.get(person_id) if person_id else None
+            pos = p.at(as_of) if p else None
+            return next((r for r in (pos.roles if pos else []) if r in t.roles), None)
+
+        # The measures the agents' actions move, each owned by its unit head's role, and the
+        # impact map with its materiality thresholds: so the decision check knows whom to
+        # inform or consult (an action with no mapped impact is consulted on).
+        sheets["KPIs"] = [
+            {"ID": k.id, "Name": k.name, "Unit": k.measure, **({"Owner role": r} if (r := owner_role(k.owner)) else {})}
+            for k in sorted(t.kpis.values(), key=lambda k: k.id)
+            if k.id in {kpi for kpi, _, _ in IMPACTS.values()}
+        ]
+        sheets["Processes"] = [{"ID": pid, "Name": name, "Owner role": role} for pid, (name, role) in sorted(PROCESSES.items())]
+        sheets["Actions"] = [
+            {
+                "ID": a,
+                "Name": ACTION_NAMES.get(a, a),
+                **({"Part of process": ACTION_PROCESS[a]} if a in ACTION_PROCESS else {}),
+                **({"Affects": IMPACTS[a][0]} if a in IMPACTS and IMPACTS[a][0] in t.kpis else {}),
+            }
+            for a in actions
+        ]
+        sheets["Impacts"] = [
+            {"Action": a, "Impact on": kpi, "Materiality threshold": thr, "Threshold unit": unit}
+            for a, (kpi, thr, unit) in sorted(IMPACTS.items())
+            if a in actions and kpi in t.kpis
+        ]
         auths, co = [], []
         for a in t.authorities:
             row = {
