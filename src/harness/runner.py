@@ -172,6 +172,34 @@ def decision(vm: VeroMesh, sc: dict) -> dict:
     return out
 
 
+def tradeoff(vm: VeroMesh, sc: dict) -> dict:
+    """An action that moves two objectives that pull against each other."""
+    ask = sc["ask"]
+    got = vm.post("/decisions/check", {k: ask[k] for k in ("agent", "action", "amount", "currency")})
+    out = {"outcome": got.get("outcome")}
+    if got.get("outcome") == "refuse":
+        reasons = " ".join(got.get("reasons") or []).lower()
+        if "principal" in reasons or "acts for" in reasons or "left" in reasons:
+            out["reason"] = "principal-inactive"
+        return out
+    trade = (got.get("basis") or {}).get("tradeoffs") or []
+    if not trade:
+        raise NotYet("the decision check reports no trade-off between objectives")
+    out["consultRoles"] = sorted({c["role"] for c in got.get("consult") or []})
+    out["priority"] = trade[0].get("priority")
+    return out
+
+
+def capability_health(vm: VeroMesh, sc: dict) -> dict:
+    """Whether a capability is degraded, from VeroMesh's findings."""
+    found = _findings(vm, "capability-degraded")
+    if found is None:
+        raise NotYet("needs the findings API")
+    cap = sc["ask"]["capability"]
+    hit = next((f for f in found if f["subject"].get("id") == cap), None)
+    return {"capability": cap, "degraded": hit is not None, "owner": hit.get("ownerRole") if hit else None}
+
+
 def missing(what: str) -> Callable[[VeroMesh, dict], dict]:
     def answer(vm: VeroMesh, sc: dict) -> dict:
         raise NotYet(what)
@@ -188,6 +216,8 @@ ANSWERERS: dict[str, Callable[[VeroMesh, dict], dict]] = {
     "prescribing-privilege": missing("needs the EMR (FHIR) connector: practitioner roles and privileges"),
     "sensitive-data": missing("needs the Databricks Unity Catalog connector: columns and their tags"),
     "segregation-of-duties": segregation_of_duties,
+    "objective-tradeoff": tradeoff,
+    "capability-degraded": capability_health,
     "document-claims": missing("needs the SharePoint document reader"),
     "system-ownership": missing("needs the ServiceNow CMDB connector: systems and their owners"),
     "reorganization": missing("needs organization units (Workday supervisory organizations) in the model"),

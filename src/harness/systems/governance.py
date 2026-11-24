@@ -50,6 +50,8 @@ ACTION_PROCESS = {"ApproveSupplierInvoice": "InvoiceApproval", "RaisePurchaseOrd
 # Impact map: action -> (KPI it moves, materiality threshold, unit). Below the threshold the
 # agent acts and informs the KPI's owner; above it, it consults them first.
 IMPACTS = {"ApproveSupplierInvoice": ("OnTimePaymentRate", 200, "invoices per day")}
+# More impacts of the same action: (KPI, threshold, unit). Paying an invoice also uses cash.
+MORE_IMPACTS = [("ApproveSupplierInvoice", "DaysPayableOutstanding", 4000, "USD per invoice")]
 ACTION_NAMES = {
     "ApproveSupplierInvoice": "Approve a supplier invoice",
     "RaisePurchaseOrder": "Raise a purchase order",
@@ -105,10 +107,44 @@ class Governance(SourceSystem):
         # The measures the agents' actions move, each owned by its unit head's role, and the
         # impact map with its materiality thresholds: so the decision check knows whom to
         # inform or consult (an action with no mapped impact is consulted on).
-        sheets["KPIs"] = [
-            {"ID": k.id, "Name": k.name, "Unit": k.measure, **({"Owner role": r} if (r := owner_role(k.owner)) else {})}
-            for k in sorted(t.kpis.values(), key=lambda k: k.id)
-            if k.id in {kpi for kpi, _, _ in IMPACTS.values()}
+        objectives = getattr(prof, "OBJECTIVES", [])
+        capabilities = getattr(prof, "CAPABILITIES", [])
+        health = {c[5][0]: (c[0], c[5][1], c[5][2]) for c in capabilities if c[5]}
+        wanted = (
+            {kpi for kpi, _, _ in IMPACTS.values()}
+            | {kpi for _, kpi, _, _ in MORE_IMPACTS}
+            | {k for o in objectives for k in o[6]}
+            | set(health)
+        )
+        day = (as_of - t.start).days
+        sheets["KPIs"] = []
+        for k in sorted(t.kpis.values(), key=lambda k: k.id):
+            if k.id not in wanted:
+                continue
+            row = {"ID": k.id, "Name": k.name, "Unit": k.measure, **({"Owner role": r} if (r := owner_role(k.owner)) else {})}
+            if k.id in health:
+                cap, thr, better = health[k.id]
+                row |= {"Health of capabilities": cap, "Health threshold": thr, "Better when": better}
+                if k.id == "OnTimePaymentRate" and hasattr(prof, "on_time_payment_rate"):
+                    # The monthly scorecard: the value as of the workbook's last update.
+                    row |= {"Current value": prof.on_time_payment_rate(day), "Measured on": as_of.isoformat()}
+            sheets["KPIs"].append(row)
+        sheets["Objectives"] = [
+            {
+                "ID": oid,
+                "Name": name,
+                "Level": level,
+                "Owner role": owner,
+                **({"Parent objective": parent} if parent else {}),
+                **({"Priority": prio} if prio is not None else {}),
+                **({"Measured by KPIs": ";".join(k for k in kpis if k in t.kpis)} if kpis else {}),
+                **({"Conflicts with objectives": ";".join(conf)} if conf else {}),
+            }
+            for oid, name, level, parent, owner, prio, kpis, conf in objectives
+        ]
+        sheets["Capabilities"] = [
+            {"ID": cid, "Name": name, "Owner role": owner, "Realized by processes": ";".join(procs), "Serves objectives": ";".join(serves)}
+            for cid, name, owner, procs, serves, _ in capabilities
         ]
         sheets["Processes"] = [{"ID": pid, "Name": name, "Owner role": role} for pid, (name, role) in sorted(PROCESSES.items())]
         sheets["Actions"] = [
@@ -122,9 +158,13 @@ class Governance(SourceSystem):
         ]
         sheets["Impacts"] = [
             {"Action": a, "Impact on": kpi, "Materiality threshold": thr, "Threshold unit": unit}
-            for a, (kpi, thr, unit) in sorted(IMPACTS.items())
+            for a, kpi, thr, unit in sorted([(a, *v) for a, v in IMPACTS.items()] + MORE_IMPACTS)
             if a in actions and kpi in t.kpis
         ]
+        for row in sheets["Actions"]:
+            more = [kpi for a, kpi, _, _ in MORE_IMPACTS if a == row["ID"] and kpi in t.kpis]
+            if more:
+                row["Affects"] = ";".join([*([row["Affects"]] if row.get("Affects") else []), *more])
         auths, co = [], []
         for a in t.authorities:
             row = {

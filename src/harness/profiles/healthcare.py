@@ -465,6 +465,46 @@ LINEAGE += [
     ("claims.silver.claims", "clinical.gold.longitudinal_patient"),
     ("claims.silver.coverage", "claims.silver.prior_authorizations"),
 ]
+KPIS.append(("DaysPayableOutstanding", "Average days to pay suppliers", "FIN", "days", "finance.gold.on_time_payment"))
+
+# Decision criteria: the objective cascade, with owners, priorities and the objectives that pull
+# against each other. id, name, level, parent, owner role, priority, KPIs, conflicts with.
+OBJECTIVES = [
+    ("SoundFinances", "Keep the organization financially sound", "enterprise", None, "FinanceApprover", None, [], []),
+    (
+        "PaySuppliersOnTime",
+        "Pay suppliers accurately and on time",
+        "function",
+        "SoundFinances",
+        "APManager",
+        1,
+        ["OnTimePaymentRate"],
+        ["PreserveWorkingCapital"],
+    ),
+    (
+        "PreserveWorkingCapital",
+        "Preserve working capital",
+        "function",
+        "SoundFinances",
+        "FinanceApprover",
+        2,
+        ["DaysPayableOutstanding"],
+        [],
+    ),
+]
+# Capabilities and their health: id, name, owner role, processes, objectives served,
+# (health KPI, threshold, better when).
+CAPABILITIES = [
+    ("AccountsPayable", "Accounts payable", "APManager", ["InvoiceApproval"], ["PaySuppliersOnTime"], ("OnTimePaymentRate", 95, "higher")),
+]
+
+
+def on_time_payment_rate(day: int) -> float:
+    """Percent of supplier invoices paid on time. The AP Manager's post is vacant from day 20
+    to 50; the backlog keeps the rate below its health threshold until day 95."""
+    return 91.4 if 20 <= day < 95 else 97.2
+
+
 KPIS.append(("PriorAuthTurnaround", "Median prior authorization decision time", "UM", "hours", "claims.silver.prior_authorizations"))
 
 # What the Clinician Copilot may do, and who must act or review. ``act``: allow (the agent
