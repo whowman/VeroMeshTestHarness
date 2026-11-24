@@ -241,6 +241,11 @@ def generate(
     for aid, name, title, purpose in prof.AGENTS:
         principals = [p for p in out.values() if p.history[-1].title == title] or list(heads.values())
         agents[aid] = Agent(aid, name, rng.choice(principals).id, f"{chance(seed, 'agent', aid):.16f}"[2:18], purpose)
+    if getattr(prof, "HR_AGENT", None):
+        aid, name, title, purpose = prof.HR_AGENT
+        holders = sorted((p for p in out.values() if p.history[-1].title == title), key=lambda p: p.id)
+        principal = holders[0] if holders else heads[sorted(heads)[0]]
+        agents[aid] = Agent(aid, name, principal.id, f"{chance(seed, 'agent', aid):.16f}"[2:18], purpose)
     authorities = [Authority(f"{role}-{action}", role, action, limit, co) for role, action, limit, co in prof.AUTHORITIES]
     truth = Truth(
         profile=profile,

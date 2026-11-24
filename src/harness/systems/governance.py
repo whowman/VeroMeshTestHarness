@@ -40,7 +40,37 @@ POLICY = "DelegationOfAuthorityPolicy"
 # Second sign-off above an authority's co-approval amount: the next authority up.
 CO_APPROVER = {"APManager": "FinanceApprover", "FinanceApprover": "Executive", "ProcurementApprover": "FinanceApprover"}
 # What each agent is built to do (its registration in the workbook).
-AGENT_ACTIONS = {"InvoiceAssistant": ["ApproveSupplierInvoice"], "ProcurementAgent": ["RaisePurchaseOrder"]}
+AGENT_ACTIONS = {
+    "InvoiceAssistant": ["ApproveSupplierInvoice"],
+    "ProcurementAgent": ["RaisePurchaseOrder"],
+    "PeopleAssistant": ["AdjustPay", "PromoteEmployee", "HireEmployee", "TerminateEmployee"],
+}
+#: The measures in the approval rules report, as VeroMesh limit kinds; its scopes, likewise.
+HR_KINDS = {"Percent_Change": "percent", "Grade_Steps": "grade-steps", "Headcount": "headcount"}
+HR_SCOPES = {"Supervisory Organization": "reporting-line", "Organization": "department", "Company": "any", "": "any"}
+
+
+def hr_parents(prof, t, principal, as_of) -> dict[str, dict]:
+    """For a principal who manages people: per action, the workbook columns of an agent
+    authority bounded by the Manager initiator rule of its business process (the parent is
+    the authority the Workday approvals connector writes: {role}-{action})."""
+    rules = getattr(prof, "HR_RULES", [])
+    has_reports = any(p.at(as_of) and p.at(as_of).manager == principal.id for p in t.people.values())
+    if not rules or not has_reports:
+        return {}
+    role = prof.HR_GROUP_ROLES["Manager"]
+    out = {}
+    for bp, kind, group, measure, limit, scope, _ in rules:
+        if kind != "Initiator" or group != "Manager" or bp not in prof.HR_ACTIONS:
+            continue
+        action = prof.HR_ACTIONS[bp]
+        row = {"Parent authority": f"{role}-{action}", "Scope": HR_SCOPES.get(scope, "any")}
+        if limit is not None and measure in HR_KINDS:
+            row |= {"Limit kind": HR_KINDS[measure], "Limit value": limit}
+        out[action] = row
+    return out
+
+
 # The process each agent action belongs to, and its owner role.
 PROCESSES = {
     "InvoiceApproval": ("Supplier invoice approval", "APManager"),
@@ -62,6 +92,10 @@ ACTION_NAMES = {
     "ApproveSystemChange": "Approve a change to a system",
     "ApprovePriorAuthorization": "Approve a prior authorization",
     "DenyPriorAuthorization": "Deny a prior authorization",
+    "AdjustPay": "Adjust pay",
+    "PromoteEmployee": "Promote an employee",
+    "HireEmployee": "Hire an employee",
+    "TerminateEmployee": "Terminate an employee",
 }
 
 
@@ -160,6 +194,9 @@ class Governance(SourceSystem):
             {"Action": a, "Impact on": kpi, "Materiality threshold": thr, "Threshold unit": unit}
             for a, kpi, thr, unit in sorted([(a, *v) for a, v in IMPACTS.items()] + MORE_IMPACTS)
             if a in actions and kpi in t.kpis
+        ] + [
+            {"Action": a, "Impact on": cap, "Materiality threshold": thr, "Threshold unit": unit}
+            for a, cap, thr, unit in getattr(prof, "HR_IMPACTS", [])
         ]
         for row in sheets["Actions"]:
             more = [kpi for a, kpi, _, _ in MORE_IMPACTS if a == row["ID"] and kpi in t.kpis]
@@ -204,7 +241,20 @@ class Governance(SourceSystem):
                 }
             )
             pos = principal.at(min(as_of, principal.left or as_of)) or principal.history[-1]
+            hr = hr_parents(prof, t, principal, as_of)
             for action in performs:
+                if action in hr:  # a decision about people: bounded by the Workday business process
+                    auths.append(
+                        {
+                            "ID": f"{ag.id}-{action}",
+                            "Name": f"{ag.name}: {ACTION_NAMES.get(action, action).lower()}",
+                            "Holder": ag.id,
+                            "Actions covered": action,
+                            "Delegated by": principal.employee_id,
+                            **hr[action],
+                        }
+                    )
+                    continue
                 parent = next((a for a in t.authorities if a.action == action and a.role in pos.roles), None)
                 if parent is None:
                     continue  # the principal holds no authority for it: the agent gets none either

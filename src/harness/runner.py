@@ -173,6 +173,29 @@ def decision(vm: VeroMesh, sc: dict) -> dict:
     return out
 
 
+def people_decision(vm: VeroMesh, sc: dict) -> dict:
+    """A decision about a person (pay, promotion, hire, termination), put to the decision
+    check with the person it is about and its value. ``approvers``: everyone the decision
+    asks to sign off (the next authority up and the approval chain's steps), not the
+    owners told about its impact."""
+    ask = sc["ask"]
+    got = vm.post("/decisions/check", {k: ask[k] for k in ("agent", "action", "about", "value") if k in ask})
+    out = {"outcome": got.get("outcome")}
+    if got.get("outcome") == "refuse":
+        reasons = " ".join(got.get("reasons") or []).lower()
+        if "principal" in reasons and ("employed" in reasons or "acts for" in reasons):
+            out["reason"] = "principal-inactive"
+    if got.get("outcome") == "consult":
+        people = set()
+        for c in got.get("consult") or []:
+            why = " ".join(c["why"]) if isinstance(c.get("why"), list) else str(c.get("why") or "")
+            if "impact" in why.lower():
+                continue
+            people |= {p["id"] if isinstance(p, dict) else p for p in c.get("people") or []}
+        out["approvers"] = sorted(people)
+    return out
+
+
 def tradeoff(vm: VeroMesh, sc: dict) -> dict:
     """An action that moves two objectives that pull against each other."""
     ask = sc["ask"]
@@ -279,6 +302,16 @@ ANSWERERS: dict[str, Callable[[VeroMesh, dict], dict]] = {
     "vacant-owner": missing("needs KPIs and their owners (the governance workbook or catalog) in the model"),
     "semantic-context": missing("needs the semantic layer (Stardog) and catalog connectors"),
 }
+for _sid in (
+    "people-raise-in-team",
+    "people-raise-approval",
+    "people-raise-above-manager",
+    "people-raise-out-of-scope",
+    "people-promotion-chain",
+    "people-hire-over-headcount",
+    "people-termination",
+):
+    ANSWERERS[_sid] = people_decision
 for _sid in (
     "copilot-history-treating",
     "copilot-history-not-treating",

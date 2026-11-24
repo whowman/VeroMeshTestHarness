@@ -569,3 +569,41 @@ SEMANTIC_TERMS = [
         ["finance.silver.supplier_invoices", "finance.bronze.erp_invoices.amount"],
     ),
 ]
+
+
+# ---------------------------------------------------------------- decisions about people
+# Workday business process rules (step 6b), as the custom report VeroMesh_Approval_Rules
+# lays them out: process, rule type, security group, measure, limit (initiator) or the
+# value above which a step applies (approval), organization scope, step order.
+HR_RULES = [
+    ("Request Compensation Change", "Initiator", "Manager", "Percent_Change", 5, "Supervisory Organization", None),
+    ("Request Compensation Change", "Initiator", "HR Partner", "Percent_Change", 12, "Company", None),
+    ("Request Compensation Change", "Approval", "Manager's Manager", "Percent_Change", 3, "", 1),
+    ("Promote Employee Inbound", "Initiator", "Manager", "Grade_Steps", 1, "Supervisory Organization", None),
+    ("Promote Employee Inbound", "Approval", "Manager's Manager", "", None, "", 1),
+    ("Promote Employee Inbound", "Approval", "HR Partner", "", None, "", 2),
+    ("Hire", "Initiator", "Manager", "Headcount", 2, "Organization", None),
+    ("Hire", "Approval", "HR Partner", "", None, "", 1),
+    ("Termination", "Initiator", "Manager", "", None, "Supervisory Organization", None),
+    ("Termination", "Approval", "HR Partner", "", None, "", 1),
+]
+#: Business process types to VeroMesh actions, and Workday security groups to roles.
+HR_ACTIONS = {
+    "Request Compensation Change": "AdjustPay",
+    "Promote Employee Inbound": "PromoteEmployee",
+    "Hire": "HireEmployee",
+    "Termination": "TerminateEmployee",
+}
+HR_GROUP_ROLES = {"Manager": "PeopleManager", "HR Partner": "HRPartner"}
+ROLES["PeopleManager"] = "Manages people: has direct reports (Workday's Manager group)"
+# An agent for a manager, chosen without the random draw (so the rest of the company is
+# the same as before it was added): the first holder of this title.
+HR_AGENT = (
+    "PeopleAssistant",
+    "People Assistant",
+    "Director of Revenue Cycle",
+    "Prepares pay changes, promotions, hires and terminations for a manager",
+)
+# Decisions about people touch the workforce: changes per day above which the HR leader is told.
+CAPABILITIES.append(("WorkforceManagement", "Workforce management", "HRLeader", [], [], None))
+HR_IMPACTS = [(action, "WorkforceManagement", 20, "changes per day") for action in HR_ACTIONS.values()]
