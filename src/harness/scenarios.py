@@ -281,12 +281,21 @@ def aliases(t: Truth) -> dict[str, str]:
     for p in t.people.values():
         for alias in (p.id, p.employee_id, p.email, p.email.split("@")[0]):
             out[alias.lower()] = p.id
+    # Systems: the CMDB's application number (APM...) and the system's name.
+    for i, s in enumerate(t.systems):
+        out[f"apm{1000 + i:07d}"] = s
+        out[t.systems[s].name.lower()] = s
     return out
 
 
 def _translate(value, names: dict[str, str]):
     if isinstance(value, str):
-        return names.get(value.lower(), value)
+        if value.lower() in names:
+            return names[value.lower()]
+        head, dot, tail = value.rpartition(".")  # "APM0001000.owned_by": a record and its field
+        if dot and head.lower() in names:
+            return f"{names[head.lower()]}.{tail}"
+        return value
     if isinstance(value, list):
         return [_translate(v, names) for v in value]
     if isinstance(value, dict):
