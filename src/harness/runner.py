@@ -200,6 +200,22 @@ def capability_health(vm: VeroMesh, sc: dict) -> dict:
     return {"capability": cap, "degraded": hit is not None, "owner": hit.get("ownerRole") if hit else None}
 
 
+def breaking_change(vm: VeroMesh, sc: dict) -> dict:
+    """A column renamed in a table: what is downstream, and whom to tell."""
+    asset = sc["ask"]["asset"]
+    try:
+        got = vm.get("/impact/data-products", urn=asset)
+    except NotYet as exc:
+        raise NotYet(f"needs the catalog connector (dbt or Databricks Unity Catalog) to load the tables and their lineage ({exc})") from exc
+    people = sorted({p["id"] if isinstance(p, dict) else p for e in got.get("notify", []) for p in e.get("people", [])})
+    return {
+        "affectedAssets": sorted(d["id"] for d in got.get("downstream", [])),
+        "affectedKpis": sorted(k["id"] for k in got.get("kpis", [])),
+        "notify": people,
+        PARTIAL: "failing models and stale semantic mappings need the dbt and semantic-layer connectors",
+    }
+
+
 def missing(what: str) -> Callable[[VeroMesh, dict], dict]:
     def answer(vm: VeroMesh, sc: dict) -> dict:
         raise NotYet(what)
@@ -217,12 +233,12 @@ ANSWERERS: dict[str, Callable[[VeroMesh, dict], dict]] = {
     "sensitive-data": missing("needs the Databricks Unity Catalog connector: columns and their tags"),
     "segregation-of-duties": segregation_of_duties,
     "objective-tradeoff": tradeoff,
+    "breaking-change": breaking_change,
     "capability-degraded": capability_health,
     "document-claims": missing("needs the SharePoint document reader"),
     "system-ownership": missing("needs the ServiceNow CMDB connector: systems and their owners"),
     "reorganization": missing("needs organization units (Workday supervisory organizations) in the model"),
     "vacant-owner": missing("needs KPIs and their owners (the governance workbook or catalog) in the model"),
-    "breaking-change": missing("needs lineage (Databricks, dbt) and the semantic layer in the model"),
     "semantic-context": missing("needs the semantic layer (Stardog) and catalog connectors"),
 }
 for _sid in (
