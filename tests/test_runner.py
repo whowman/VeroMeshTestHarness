@@ -86,7 +86,7 @@ def test_decisions_are_put_to_the_check_and_scored(company):
     manager = next(p for p in truth.active_people() if "APManager" in p.at(truth.today).roles)
 
     def decide(body):
-        if body["amount"] <= 5000:
+        if body.get("amount", 0) <= 5000:
             return {"outcome": "allow", "consult": []}
         return {
             "outcome": "consult",
@@ -139,3 +139,34 @@ def test_the_tier1_measures(company, tmp_path, capsys):
     assert got["M1"]["withModel"]["of"] == got["M1"]["withoutModel"]["of"] > 0
     assert got["M5"]["scenarios"] and "M2" not in got  # the fake has no model measures
     assert "M1 context question accuracy" in capsys.readouterr().out
+
+
+def test_people_decisions_follow_the_business_process_rules(company):
+    """Decisions about people: the People Assistant's asks carry the person and the value,
+    and the approvers are scored as a set (impact owners told are not approvers)."""
+    truth, h = company
+    by_emp = {p.employee_id: p for p in truth.people.values()}
+    asked = []
+
+    def decide(body):
+        asked.append(body)
+        if body["action"] != "AdjustPay" or "about" not in body:
+            return {"outcome": "refuse", "reasons": ["not in this fake"]}
+        value = float(body.get("value", 0))
+        if value <= 3:
+            return {"outcome": "allow", "consult": []}
+        boss = by_emp[body["about"]].at(truth.today).manager
+        boss = truth.people[boss].at(truth.today).manager
+        return {
+            "outcome": "consult",
+            "consult": [
+                {"role": "person:x", "people": [{"id": truth.people[boss].employee_id}], "why": "step 1 of the approval chain"},
+                {"role": "HRLeader", "people": [{"id": "hr-lead"}], "why": ["no impact is mapped"]},
+            ],
+        }
+
+    report = run(fake_veromesh(truth, decision=decide), h)
+    results = {r["id"]: r for r in report.score["results"]}
+    assert results["people-raise-in-team"]["passed"]
+    assert results["people-raise-approval"]["passed"]
+    assert any(b.get("value") == "4" and b.get("about") for b in asked)

@@ -58,7 +58,7 @@ def test_the_workbook_lags_until_the_first_of_the_month():
     stale = [d for d in client.get("/harness/answer-key").json()["defects"] if d["kind"] == "governance-workbook-stale"]
     assert [d["about"]["agent"] for d in stale] == ["InvoiceAssistant"]
     about = client.get("/governance/workbook").json()
-    assert about["updatedOn"].endswith("-01") and about["sheets"]["Agents"] == 4
+    assert about["updatedOn"].endswith("-01") and about["sheets"]["Agents"] == 5  # with the People Assistant
 
 
 def test_at_difficulty_zero_the_workbook_is_current():

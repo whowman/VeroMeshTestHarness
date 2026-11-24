@@ -5,7 +5,9 @@ What a connector reads, in the two ways integrations read Workday:
   /ccx/api/v1/{tenant}/supervisoryOrganizations;
 - Reports as a Service (RaaS), the usual route for bulk HR feeds:
   /ccx/service/customreport2/{tenant}/{owner}/VeroMesh_Workers?format=json, and
-  VeroMesh_Worker_Changes with Updated_From and Updated_Through for what changed.
+  VeroMesh_Worker_Changes with Updated_From and Updated_Through for what changed, and
+  VeroMesh_Approval_Rules: the business process definitions' initiators and approval
+  steps (promotions, pay changes, hires, terminations), from the profile's HR_RULES.
 Sign-in is OAuth at /ccx/oauth2/{tenant}/token (refresh token or client credentials).
 
 Workday holds employees only: contingent workers (contractors) are not in it, so they
@@ -197,6 +199,9 @@ class Workday(SourceSystem):
                     if start <= date.fromisoformat(c["Entered_On"]) <= end and date.fromisoformat(c["Entered_On"]) <= self.truth.today
                 ]
                 return {"Report_Entry": sorted(rows, key=lambda c: (c["Entered_On"], c["Employee_ID"]))}
+            if report == "VeroMesh_Approval_Rules":
+                prof = importlib.import_module(f"harness.profiles.{self.truth.profile}")
+                return {"Report_Entry": approval_rows(getattr(prof, "HR_RULES", []))}
             raise HTTPException(404, detail={"error": f"No report {report} for {owner}"})
 
         return r
@@ -220,4 +225,24 @@ def report_row(w: dict) -> dict:
         "Termination_Date": w["terminationDate"] or "",
         "Active_Status": "1" if w["active"] else "0",
         "Worker_Type": w["workerType"],
+        # Role-based security groups assigned to the worker (an HR Partner on their organization).
+        "Organization_Roles": "HR Partner" if w["businessTitle"] == "HR Business Partner" else "",
     }
+
+
+def approval_rows(rules) -> list[dict]:
+    """Business process rules as the VeroMesh_Approval_Rules custom report lays them out
+    (one row per initiator or approval step of each business process definition)."""
+    out = []
+    for bp, kind, group, measure, limit, scope, step in rules:
+        row = {"Business_Process_Type": bp, "Rule_Type": kind, "Security_Group": group}
+        if measure:
+            row["Condition_Measure"] = measure
+        if limit is not None:
+            row["Condition_Above"] = str(limit)
+        if scope:
+            row["Organization_Scope"] = scope
+        if step is not None:
+            row["Step_Order"] = str(step)
+        out.append(row)
+    return out
