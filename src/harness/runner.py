@@ -228,7 +228,7 @@ def breaking_change(vm: VeroMesh, sc: dict) -> dict:
     """A column renamed in a table: what is downstream, and whom to tell."""
     asset = sc["ask"]["asset"]
     try:
-        got = vm.get("/impact/data-products", urn=asset)
+        got = vm.get(f"/impact/data-products/{asset}")  # the dbt connector's ID: catalog.schema.table
     except NotYet as exc:
         raise NotYet(f"needs the catalog connector (dbt or Databricks Unity Catalog) to load the tables and their lineage ({exc})") from exc
     people = sorted({p["id"] if isinstance(p, dict) else p for e in got.get("notify", []) for p in e.get("people", [])})

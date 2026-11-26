@@ -4,7 +4,8 @@ them (/dbt/manifest.json, /dbt/run_results.json, /dbt/catalog.json).
 The project's sources are the bronze tables; its models are the silver and gold tables,
 with the lakehouse's lineage as their dependencies, each column's classification and
 the asset's owner in ``meta``, and not_null and unique tests on their key columns. The
-run results come from the most recent nightly run.
+KPIs are its metrics (the dbt Semantic Layer), each depending on the table it is computed
+from. The run results come from the most recent nightly run.
 
 Quirk, recorded as a defect:
 - model-failing: after the clock's breaking change, the model reading the renamed
@@ -13,6 +14,7 @@ Quirk, recorded as a defect:
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, time
 
 from fastapi import APIRouter
@@ -109,6 +111,24 @@ class Dbt(SourceSystem):
                     "timing": [{"name": "execute", "started_at": run_at, "completed_at": run_at}],
                 }
             )
+        # The KPIs as dbt metrics (the dbt Semantic Layer): each computed from its table.
+        # Metric names are snake_case, so the KPI's ID rides in meta where the name would
+        # not give it back (EDLengthOfStay -> ed_length_of_stay -> EdLengthOfStay).
+        metrics = {}
+        for k in t.kpis.values():
+            if k.asset not in ids:
+                continue
+            snake = re.sub(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", "_", k.id).lower()
+            back = "".join(w[:1].upper() + w[1:] for w in snake.split("_"))
+            metrics[f"metric.{PROJECT}.{snake}"] = {
+                "unique_id": f"metric.{PROJECT}.{snake}",
+                "resource_type": "metric",
+                "name": snake,
+                "label": k.name,
+                "type": "simple",
+                "depends_on": {"nodes": [ids[k.asset]]},
+                "meta": {"owner": t.people[k.owner].email if k.owner else None, **({"veromesh_kpi": k.id} if back != k.id else {})},
+            }
         manifest = {
             "metadata": {
                 "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json",
@@ -118,6 +138,7 @@ class Dbt(SourceSystem):
             },
             "nodes": nodes,
             "sources": sources,
+            "metrics": metrics,
         }
         run = {
             "metadata": {"dbt_schema_version": "https://schemas.getdbt.com/dbt/run-results/v6.json", "generated_at": run_at},
