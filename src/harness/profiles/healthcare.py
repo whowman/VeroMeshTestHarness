@@ -606,4 +606,12 @@ HR_AGENT = (
 )
 # Decisions about people touch the workforce: changes per day above which the HR leader is told.
 CAPABILITIES.append(("WorkforceManagement", "Workforce management", "HRLeader", [], [], None))
+# The capability map as the enterprise architecture tools hold it (ServiceNow EA, SAP
+# LeanIX): the capabilities above under two top-level ones. id, name, parent, owner role.
+EA_CAPABILITIES = [
+    ("Finance", "Finance", None, "FinanceApprover"),
+    ("AccountsPayable", "Accounts payable", "Finance", "APManager"),
+    ("PeopleAndCulture", "People and culture", None, "HRLeader"),
+    ("WorkforceManagement", "Workforce management", "PeopleAndCulture", "HRLeader"),
+]
 HR_IMPACTS = [(action, "WorkforceManagement", 20, "changes per day") for action in HR_ACTIONS.values()]

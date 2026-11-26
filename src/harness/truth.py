@@ -166,6 +166,12 @@ class Truth:
         heads = [p for p in self.active_people(day) if (pos := p.at(day)) and pos.unit == unit and pos.head]
         return heads[0] if heads else None
 
+    def holder(self, role: str, day: date | None = None) -> Person | None:
+        """The first person (by ID) filling ``role`` on ``day``, or None if it is vacant."""
+        day = day or self.today
+        people = sorted((p for p in self.active_people(day) if role in ((p.at(day) and p.at(day).roles) or [])), key=lambda p: p.id)
+        return people[0] if people else None
+
     def to_json(self) -> str:
         return json.dumps(asdict(self), default=str, indent=1)
 
