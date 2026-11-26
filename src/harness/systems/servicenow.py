@@ -14,12 +14,17 @@ Quirks, each recorded as a defect:
 - no-technical-owner: one business application has no managed_by;
 - duplicate-ci: one application is in the CMDB twice under different names;
 - owner-is-leaver: the CMDB's owners are updated monthly, so an owner who left still
-  owns the application for a while.
+  owns the application (or capability) for a while;
+- capability-owner-vacant: a capability whose owner role no one fills has no owned_by.
+
+Enterprise Architecture's business capability map is cmdb_ci_business_capability (name,
+parent, owned_by), from the profile's EA_CAPABILITIES.
 """
 
 from __future__ import annotations
 
 import base64
+import importlib
 import re
 from datetime import date, datetime, time, timedelta
 
@@ -65,6 +70,7 @@ class ServiceNow(SourceSystem):
                 "sys_user_group",
                 "sys_user_grmember",
                 "cmdb_ci_business_app",
+                "cmdb_ci_business_capability",
                 "cmdb_ci_server",
                 "cmdb_ci_db_instance",
                 "cmdb_rel_ci",
@@ -194,6 +200,35 @@ class ServiceNow(SourceSystem):
                     "child": self.ref(table, cid),
                     "type": {"value": "Runs on::Runs", "display_value": "Runs on::Runs"},
                 }
+        # Enterprise Architecture: the business capability map, its owners from the same
+        # monthly review (a vacant owner role leaves owned_by empty).
+        prof = importlib.import_module(f"harness.profiles.{t.profile}")
+        for i, (cid_, name, parent, role) in enumerate(getattr(prof, "EA_CAPABILITIES", [])):
+            owner = t.holder(role, review) or t.holder(role, t.today)
+            if owner is None:
+                defects.append(
+                    defect("capability-owner-vacant", self.name, {"capability": cid_, "role": role}, "no one fills the owner role")
+                )
+            elif owner.left and owner.left <= t.today:
+                defects.append(
+                    defect(
+                        "owner-is-leaver",
+                        self.name,
+                        {"capability": cid_, "person": owner.id},
+                        "the capability map names an owner who has left",
+                    )
+                )
+            sid = self.sys_id("cap", cid_)
+            tables["cmdb_ci_business_capability"][sid] = {
+                "sys_id": sid,
+                "name": name,
+                "number": f"BCAP{1000 + i:07d}",
+                "short_description": f"The {name.lower()} capability.",
+                "parent": self.ref("cmdb_ci_business_capability", self.sys_id("cap", parent) if parent else None),
+                "owned_by": self.ref("sys_user", user_id(owner.id) if owner else None),
+                "install_status": INSTALLED,
+                "sys_updated_on": ts(review),
+            }
         if self.on("duplicate-ci"):
             dup_of, dup_name = DUPLICATE
             did = self.sys_id("app-duplicate", dup_of)

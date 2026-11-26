@@ -238,6 +238,7 @@ def test_status(harness):
         "governance",
         "erp",
         "halo",
+        "leanix",
         "servicenow",
         "sharepoint",
         "stardog",

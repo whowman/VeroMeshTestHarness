@@ -16,6 +16,7 @@ from harness.truth import generate
 FACTS = {
     "contractor-only-here",
     "vacant-supervisory-org",
+    "capability-owner-vacant",
     "schema-drift",
     "model-failing",
     "document-names-leaver",

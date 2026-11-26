@@ -202,6 +202,8 @@ class Workday(SourceSystem):
             if report == "VeroMesh_Approval_Rules":
                 prof = importlib.import_module(f"harness.profiles.{self.truth.profile}")
                 return {"Report_Entry": approval_rows(getattr(prof, "HR_RULES", []))}
+            if report == "VeroMesh_Goals":
+                return {"Report_Entry": goal_rows(self.truth)}
             raise HTTPException(404, detail={"error": f"No report {report} for {owner}"})
 
         return r
@@ -246,3 +248,28 @@ def approval_rows(rules) -> list[dict]:
             row["Step_Order"] = str(step)
         out.append(row)
     return out
+
+
+def goal_rows(t) -> list[dict]:
+    """Organization goals (Workday Talent) from the profile's OBJECTIVES: each owned by the
+    person filling its owner role (while it is vacant, whoever filled it when it was set,
+    as Workday keeps the goal with its original owner), aligned to its parent goal."""
+    prof = importlib.import_module(f"harness.profiles.{t.profile}")
+    rows = []
+    for oid, name, level, parent, role, _priority, kpis, _conflicts in getattr(prof, "OBJECTIVES", []):
+        owner = t.holder(role, t.today) or t.holder(role, t.start)
+        pos = owner.at(t.today) or owner.history[-1] if owner else None
+        rows.append(
+            {
+                "Goal_ID": oid,
+                "Goal_Name": name,
+                "Description": name + ".",
+                "Owner_Employee_ID": owner.employee_id if owner else "",
+                "Owner_Business_Title": pos.title if pos else "",
+                "Parent_Goal_ID": parent or "",
+                "Goal_Level": level.title(),
+                "Status": "In Progress",
+                "KPI_IDs": ";".join(kpis),
+            }
+        )
+    return rows
