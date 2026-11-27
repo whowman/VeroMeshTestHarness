@@ -9,6 +9,7 @@ harness's own controls under /harness.
                       and the truth's owners, roles and authorities
     /harness/scenarios   the questions askable today, each with its expected answer
     /harness/score    POST VeroMesh's answers; returns what passed, with precision and recall
+    /harness/received the calls that reached the ERP's MCP server (/erp/mcp), for the gateway
 
 A connector is pointed at a system's base URL (for example http://harness:8100/servicenow)
 exactly as it would be at the real system's.
@@ -17,10 +18,12 @@ exactly as it would be at the real system's.
 from __future__ import annotations
 
 import asyncio
+from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from starlette.routing import Route
 
 from . import __version__, clock, scenarios
 from .systems import REGISTRY
@@ -95,9 +98,30 @@ def answer_key(truth: Truth, systems: dict) -> dict:
 def create_app(truth: Truth | None = None, systems: list[str] | None = None) -> FastAPI:
     truth = truth or generate()
     chosen = {n: REGISTRY[n](truth) for n in (systems or sorted(REGISTRY))}
-    app = FastAPI(title="VeroMesh test harness", version=__version__, docs_url="/harness/docs", openapi_url="/harness/openapi.json")
+    servers = []  # MCP servers in front of systems, whose session managers the lifespan runs
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        async with AsyncExitStack() as stack:
+            for m in servers:
+                await stack.enter_async_context(m.session_manager.run())
+            yield
+
+    app = FastAPI(
+        title="VeroMesh test harness",
+        version=__version__,
+        docs_url="/harness/docs",
+        openapi_url="/harness/openapi.json",
+        lifespan=lifespan,
+    )
     for name, system in chosen.items():
         app.include_router(system.router(), prefix=f"/{name}", tags=[system.title])
+    if "erp" in chosen:
+        from .systems import erp_mcp
+
+        server, endpoint = erp_mcp.build(chosen["erp"])
+        servers.append(server)
+        app.router.routes.append(Route("/erp/mcp", endpoint=endpoint, methods=["GET", "POST", "DELETE"]))
     app.state.truth = truth
     app.state.systems = chosen
     app.state.chaos = {"rate": 0.0, "kinds": list(CHAOS_KINDS), "slow_ms": 1500, "seed": 1}
@@ -197,6 +221,14 @@ def create_app(truth: Truth | None = None, systems: list[str] | None = None) -> 
     def list_scenarios() -> dict:
         """The questions askable today, each with its expected answer."""
         return {"today": truth.today.isoformat(), "scenarios": scenarios.scenarios(truth, chosen)}
+
+    @app.get("/harness/received", tags=["harness"])
+    def received(after: int = 0) -> dict:
+        """The calls that reached the ERP's MCP server (``/erp/mcp``), in order, after ``after``:
+        how a scenario tells whether a call VeroMesh's gateway refused or held reached it."""
+        erp = chosen.get("erp")
+        calls = [c for c in (erp.received if erp else []) if c["seq"] > after]
+        return {"system": "erp", "calls": calls}
 
     @app.post("/harness/score", tags=["harness"])
     def score(answers: dict) -> dict:

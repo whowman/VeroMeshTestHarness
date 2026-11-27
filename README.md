@@ -49,7 +49,7 @@ VeroMesh's connectors read the simulated systems through each platform's public 
 | SAP LeanIX | `/leanix` | GraphQL API: `POST /services/pathfinder/v1/graphql`, `allFactSheets(factSheetType: BusinessCapability)` in Relay pages (name, description, status, external ID, parent, subscriptions, and the supporting applications in `relBusinessCapabilityToApplication`). API token exchanged at `/services/mtm/v1/oauth2/token` (basic authentication as `apitoken`) | subscription-stale, archived-capability, application-unsynced |
 | Workday HCM | `/workday` | REST API: `/ccx/api/v1/{tenant}/workers` (with `limit`, `offset`, `search`), `workers/{id}`, `supervisoryOrganizations`. Reports as a Service: `/ccx/service/customreport2/{tenant}/{owner}/VeroMesh_Workers` `VeroMesh_Worker_Changes`, `VeroMesh_Goals` (organization goals) (`Updated_From`, `Updated_Through`). OAuth at `/ccx/oauth2/{tenant}/token` (refresh token or client credentials). Employees only: no contractors | retro-termination, vacant-supervisory-org, legal-and-preferred-name |
 | Databricks | `/databricks` | Unity Catalog: `/api/2.1/unity-catalog/catalogs`, `schemas`, `tables` (columns, owner, properties, paging), `tables/{full_name}`. Lineage: `/api/2.0/lineage-tracking/table-lineage`. SQL Statement Execution (`/api/2.0/sql/statements`): column and table tags from `system.information_schema`, and `SELECT * FROM <table> LIMIT n` returning simulated records (encounters, medication orders, invoices, workers) consistent with the truth. A personal access token, or OAuth at `/oidc/v1/token` | owner-is-group, owner-is-leaver, untagged-sensitive-column, schema-drift |
-| Oracle Fusion ERP | `/erp` | REST API: `/fscmRestApi/resources/11.13.18.05/suppliers`, `purchaseOrders`, `invoices` (each with its approvers) and `/hcmRestApi/resources/11.13.18.05/userAccounts` (with job roles). Paging with `limit`, `offset`, `hasMore` and `totalResults=true`; filters with `q` (`Field op value;...`). Basic auth. Every invoice is approved by someone who held the authority that day | approved-over-limit, missing-co-approval, self-approved-po, leaver-retains-role |
+| Oracle Fusion ERP | `/erp` | REST API: `/fscmRestApi/resources/11.13.18.05/suppliers`, `purchaseOrders`, `invoices` (each with its approvers) and `/hcmRestApi/resources/11.13.18.05/userAccounts` (with job roles). Paging with `limit`, `offset`, `hasMore` and `totalResults=true`; filters with `q` (`Field op value;...`). Basic auth. Every invoice is approved by someone who held the authority that day. **For agents:** an MCP server in front of it at `/erp/mcp` (see below) | approved-over-limit, missing-co-approval, self-approved-po, leaver-retains-role |
 | EMR (Epic, FHIR R4) | `/emr` | `/fhir/Organization`, `Practitioner` (with NPI), `PractitionerRole` (department, role and clinical privileges), `Patient`, `Encounter`, `MedicationRequest`; searchset Bundles with a `next` link, `_count`, `_offset`, `identifier`, `active`, `practitioner`, `subject`, `_lastUpdated`; `/fhir/metadata`. Client credentials at `/oauth2/token`. Patients are synthetic; practitioners are the company's clinicians | practitioner-active-after-leaving, missing-npi, privilege-not-in-hr |
 | dbt | `/dbt` | The run's artifacts: `manifest.json` (sources, models with their dependencies, columns with classification, owners, tests), `run_results.json` (the nightly run), `catalog.json` | model-failing (after the breaking change; the models after it are skipped) |
 | SharePoint | `/sharepoint` | Microsoft Graph: `/v1.0/sites` (`?search=`), `sites/{id}/drive`, `drives/{id}/root/children`, `items/{id}/children`, `items/{id}`, `items/{id}/content` (markdown), `root/delta`; the Graph token from `/entra`. Sites for Finance, Clinical Operations, IT, Data Governance and People hold the delegation of authority policy, an escalation procedure, an SOP, a charter, a runbook per system, the data owner register, monthly council minutes and an org chart per unit. Each document's statements are checked against the truth every day | policy-system-mismatch, register-conflicts-with-catalog; and as the clock moves, document-names-leaver, document-outdated |
@@ -92,6 +92,9 @@ Which requests fail depends only on their order and the seed, so a connector fai
 | reorganization | 2 | 45 | Whom the head of Clinical Informatics now reports to |
 | vacant-owner | 2 | 20 | Who owns the on-time payment KPI while its owner's post is vacant, and where its decisions go |
 | breaking-change | 3 | 60 | What the renamed column affects (assets, KPIs, the failing model, the stale semantic mapping) and whom to notify |
+| gateway-allowed | 1 | 0 | Through VeroMesh's MCP gateway, the Invoice Assistant's 800 USD approval reaches the ERP (and nothing does once its principal has left) |
+| gateway-held | 1 | 0 | A 12,000 USD approval is held: it does not reach the ERP until the consulted owner approves, then it does |
+| gateway-not-offered | 1 | 0 | Changing a supplier's bank account, a tool the gateway does not offer, never reaches the ERP |
 | semantic-context | 2 | 0 | Who is accountable for each semantic term (the owners of the tables it maps to); unmapped terms; broken mappings |
 
 **The Clinician Copilot slice.** Eleven scenarios put the questions a clinical AI copilot asks before it acts. Each names a real patient in the EMR and a real clinician, and expects the outcome (allow, draft for signature, consult or refuse), the roles and people who must sign or review, and the data's owner. The rules are in the profile (`COPILOT_RULES`).
@@ -111,6 +114,22 @@ Which requests fail depends only on their order and the seed, so a connector fai
 | copilot-record-release | Release the records to an outside provider | the privacy officer decides |
 
 A role with no one in it today goes to the head of the unit that owns the rule.
+
+### The ERP's MCP server
+
+Oracle publishes REST APIs, not an MCP server; to let agents act, a customer or an agent platform puts an MCP server in front of them. The harness has one at `/erp/mcp` (MCP Streamable HTTP; bearer token `harness-erp-mcp-token`, a test value) with three tools: `get_invoice`, `approve_invoice` and `change_supplier_bank`. Every call that reaches it is recorded at `GET /harness/received`, which is how the gateway scenarios tell whether a call VeroMesh refused or held reached the ERP.
+
+To run them, register it in VeroMesh's MCP gateway (Administration > Gateway, or `PUT /api/v1/gateway/settings`) with its token in the environment variable named, and offer `approve_invoice` as checked and `get_invoice` as read-only. `change_supplier_bank` stays not offered:
+
+```json
+{"targets": [{"name": "erp", "url": "http://harness:8100/erp/mcp",
+  "header": "Authorization", "secretEnv": "GATEWAY_ERP_TOKEN",
+  "tools": {"approve_invoice": {"action": "ApproveSupplierInvoice", "amount": "amount",
+                                "currency": "currency", "note": "invoice_number"}},
+  "passThrough": ["get_invoice"]}]}
+```
+
+with `GATEWAY_ERP_TOKEN="Bearer harness-erp-mcp-token"` in VeroMesh's environment. The runner then calls the tools through the gateway as the Invoice Assistant (an administrator's token names the agent), approves the held call as the consulted owner, and checks what arrived.
 
 ### Running the scenarios against VeroMesh
 

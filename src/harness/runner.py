@@ -21,6 +21,7 @@ What VeroMesh must hold first is loaded by its connectors, for example:
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -43,6 +44,8 @@ class VeroMesh:
     base: str = ""
     token: str | None = None
     calls: int = 0
+    harness: httpx.Client | None = None  # for what reached a system (the gateway scenarios)
+    harness_base: str = ""
 
     def call(self, method: str, path: str, **kw) -> httpx.Response:
         headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
@@ -277,6 +280,105 @@ def system_ownership(vm: VeroMesh, sc: dict) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------- the MCP gateway
+
+MCP_HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
+UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def _gateway_target(vm: VeroMesh) -> str:
+    """The name the harness ERP's MCP server is registered under in VeroMesh's gateway."""
+    r = vm.call("GET", "/gateway/settings")
+    if r.status_code == 404:
+        raise NotYet("needs VeroMesh's MCP gateway")
+    if r.status_code == 403:
+        raise NotYet("reading the gateway's settings needs an administrator's token")
+    r.raise_for_status()
+    for t in r.json().get("targets", []):
+        if t["url"].rstrip("/").endswith("/erp/mcp"):
+            return t["name"]
+    raise NotYet("register the harness ERP's MCP server (<harness>/erp/mcp) as a gateway target (harness README, 'The ERP's MCP server')")
+
+
+def _mcp(vm: VeroMesh, agent: str, method: str, params: dict) -> dict:
+    """One JSON-RPC request to VeroMesh's gateway, as the agent (an administrator's or a
+    development token names the agent; an agent's own token implies it)."""
+    headers = {**MCP_HEADERS, "X-VeroMesh-Agent": agent}
+    if vm.token:
+        headers["Authorization"] = f"Bearer {vm.token}"
+    vm.calls += 1
+    r = vm.http.post(f"{vm.base}/gateway/mcp", headers=headers, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+    if r.status_code == 404:
+        raise NotYet("needs VeroMesh's MCP gateway")
+    r.raise_for_status()
+    body = r.json()
+    if "error" in body:
+        raise NotYet(f"the gateway answered: {body['error'].get('message')}")
+    return body["result"]
+
+
+def _received(vm: VeroMesh, after: int) -> list[dict]:
+    if vm.harness is None:
+        raise NotYet("the runner needs the harness to see what reached the ERP")
+    return vm.harness.get(f"{vm.harness_base}/harness/received", params={"after": after}).json()["calls"]
+
+
+def _last_received(vm: VeroMesh) -> int:
+    calls = _received(vm, 0)
+    return calls[-1]["seq"] if calls else 0
+
+
+def _arrived(vm: VeroMesh, after: int, tool: str, arguments: dict) -> bool:
+    key = arguments.get("invoice_number") or arguments.get("supplier_id")
+    return any(c["tool"] == tool and key in c["arguments"].values() for c in _received(vm, after))
+
+
+def _gateway_call(vm: VeroMesh, sc: dict) -> tuple[str, dict, str | None]:
+    """Call the scenario's tool through the gateway: (the text it answered, the decision, its id)."""
+    ask = sc["ask"]
+    name = f"{_gateway_target(vm)}__{ask['tool']}"
+    res = _mcp(vm, ask["agent"], "tools/call", {"name": name, "arguments": ask["arguments"]})
+    text = " ".join(c.get("text", "") for c in res.get("content") or [])
+    m = UUID.search(text)
+    d = vm.get(f"/decisions/{m.group(0)}") if m else {}
+    return text, d, m.group(0) if m else None
+
+
+def gateway_allowed(vm: VeroMesh, sc: dict) -> dict:
+    """The agent's call through the gateway: what was decided, and whether it reached the ERP."""
+    after = _last_received(vm)
+    _, d, _ = _gateway_call(vm, sc)
+    return {"outcome": d.get("outcome"), "reachedSystem": _arrived(vm, after, sc["ask"]["tool"], sc["ask"]["arguments"])}
+
+
+def gateway_held(vm: VeroMesh, sc: dict) -> dict:
+    """A call that needs an owner: it must not reach the ERP until the consulted owner approves
+    (the runner answers as the first person consulted), and must reach it then."""
+    ask = sc["ask"]
+    after = _last_received(vm)
+    _, d, did = _gateway_call(vm, sc)
+    before = _arrived(vm, after, ask["tool"], ask["arguments"])
+    out = {"outcome": d.get("outcome"), "reachedBeforeApproval": before, "reachedAfterApproval": before}
+    if d.get("outcome") == "consult":
+        people = [p["id"] if isinstance(p, dict) else p for c in d.get("consult") or [] for p in c.get("people") or []]
+        body = {"verdict": "approved", **({"person": people[0]} if people else {})}
+        r = vm.call("POST", f"/decisions/{did}/overrides", json=body)
+        if r.status_code >= 400:
+            out[PARTIAL] = f"could not approve as the consulted owner: {_detail(r)}"
+        out["reachedAfterApproval"] = _arrived(vm, after, ask["tool"], ask["arguments"])
+    return out
+
+
+def gateway_not_offered(vm: VeroMesh, sc: dict) -> dict:
+    """A tool not offered to agents: invisible in the gateway's list, and never reaching the ERP."""
+    ask = sc["ask"]
+    name = f"{_gateway_target(vm)}__{ask['tool']}"
+    listed = {t["name"] for t in _mcp(vm, ask["agent"], "tools/list", {}).get("tools", [])}
+    after = _last_received(vm)
+    _mcp(vm, ask["agent"], "tools/call", {"name": name, "arguments": ask["arguments"]})
+    return {"offered": name in listed, "reachedSystem": _arrived(vm, after, ask["tool"], ask["arguments"])}
+
+
 def missing(what: str) -> Callable[[VeroMesh, dict], dict]:
     def answer(vm: VeroMesh, sc: dict) -> dict:
         raise NotYet(what)
@@ -301,6 +403,9 @@ ANSWERERS: dict[str, Callable[[VeroMesh, dict], dict]] = {
     "reorganization": missing("needs organization units (Workday supervisory organizations) in the model"),
     "vacant-owner": missing("needs KPIs and their owners (the governance workbook or catalog) in the model"),
     "semantic-context": missing("needs the semantic layer (Stardog) and catalog connectors"),
+    "gateway-allowed": gateway_allowed,
+    "gateway-held": gateway_held,
+    "gateway-not-offered": gateway_not_offered,
 }
 for _sid in (
     "people-raise-in-team",
@@ -393,11 +498,16 @@ def baseline(vm: VeroMesh | None, sc: dict) -> dict:
     and has nothing to look up who owns, approves or must be consulted."""
     if sc["id"] in AGENT_REQUESTS:
         return {"outcome": "allow"}
+    if sc["id"].startswith("gateway-"):
+        # With nothing in between, every tool the agent's credentials reach is offered and runs.
+        return {"outcome": "allow", "offered": True, "reachedSystem": True, "reachedBeforeApproval": True, "reachedAfterApproval": True}
     raise NotYet("without the model: no organizational context to look this up in")
 
 
 def run(vm: VeroMesh | None, harness: httpx.Client, harness_base: str = "", *, without_model: bool = False) -> Report:
     listed = harness.get(f"{harness_base}/harness/scenarios").json()
+    if vm is not None and vm.harness is None:
+        vm.harness, vm.harness_base = harness, harness_base
     report = Report(today=listed["today"])
     for sc in listed["scenarios"]:
         answer = baseline if without_model else ANSWERERS.get(sc["id"], missing("no answerer for this scenario yet"))
