@@ -352,19 +352,21 @@ def gateway_allowed(vm: VeroMesh, sc: dict) -> dict:
 
 
 def gateway_held(vm: VeroMesh, sc: dict) -> dict:
-    """A call that needs an owner: it must not reach the ERP until the consulted owner approves
-    (the runner answers as the first person consulted), and must reach it then."""
+    """A call that needs an owner: it must not reach the ERP until the consulted owners approve
+    (the runner answers as the first person in each consulted role), and must reach it then."""
     ask = sc["ask"]
     after = _last_received(vm)
     _, d, did = _gateway_call(vm, sc)
     before = _arrived(vm, after, ask["tool"], ask["arguments"])
     out = {"outcome": d.get("outcome"), "reachedBeforeApproval": before, "reachedAfterApproval": before}
     if d.get("outcome") == "consult":
-        people = [p["id"] if isinstance(p, dict) else p for c in d.get("consult") or [] for p in c.get("people") or []]
-        body = {"verdict": "approved", **({"person": people[0]} if people else {})}
-        r = vm.call("POST", f"/decisions/{did}/overrides", json=body)
-        if r.status_code >= 400:
-            out[PARTIAL] = f"could not approve as the consulted owner: {_detail(r)}"
+        # Every consulted role answers (the role above the limit, and owners consulted for impact).
+        for c in d.get("consult") or []:
+            people = [p["id"] if isinstance(p, dict) else p for p in c.get("people") or []]
+            body = {"verdict": "approved", "role": c["role"], **({"person": people[0]} if people else {})}
+            r = vm.call("POST", f"/decisions/{did}/overrides", json=body)
+            if r.status_code >= 400:
+                out[PARTIAL] = f"could not approve as {c['role']}: {_detail(r)}"
         out["reachedAfterApproval"] = _arrived(vm, after, ask["tool"], ask["arguments"])
     return out
 
