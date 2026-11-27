@@ -12,12 +12,17 @@ The mock follows LeanIX's public API:
   ``subscriptions`` (``type``, ``user { email displayName }``, ``roles { name }``). The
   mock reads only the page size and cursor from a query, not the rest of it.
 
-The capability map is the profile's EA_CAPABILITIES, the same as ServiceNow EA's.
+The capability map is the profile's EA_CAPABILITIES, the same as ServiceNow EA's. Each
+capability's ``relBusinessCapabilityToApplication`` lists the Application fact sheets that
+support it (the profile's EA_SUPPORT): ``id``, ``name`` and ``externalId { externalId }``, the
+application's ServiceNow number, as when LeanIX is synced with the CMDB.
 
 Quirks, each recorded as a defect:
 - subscription-stale: subscriptions are maintained by hand and reviewed quarterly, so the
   Business Owner subscription keeps the person who filled the owner role at the last review;
-- archived-capability: one capability retired from the map is still there, ARCHIVED.
+- archived-capability: one capability retired from the map is still there, ARCHIVED;
+- application-unsynced: one application was entered in LeanIX by hand under its product name,
+  with no external ID, so it matches no system the CMDB knows by name or number.
 """
 
 from __future__ import annotations
@@ -35,6 +40,7 @@ API_TOKEN = "harness-leanix-api-token"  # noqa: S105 — a test token for a mock
 ACCESS = "harness-leanix-access"  # noqa: S105 — a test token for a mock
 REVIEW_DAYS = 90  # subscriptions are reviewed quarterly
 ARCHIVED = ("ChequePrinting", "Cheque printing", "AccountsPayable")
+UNSYNCED = ("HCM", "Workday")  # the application entered by hand, and the name it was given
 
 
 class Leanix(SourceSystem):
@@ -50,6 +56,27 @@ class Leanix(SourceSystem):
         review = t.start + timedelta(days=((t.today - t.start).days // period) * period) if period else t.today
         ids = {c[0]: self.guid("fs", c[0]) for c in caps}
         sheets = {}
+        systems = list(t.systems)
+        support: dict[str, list[dict]] = {}
+        for cap, sid in getattr(prof, "EA_SUPPORT", []):
+            if sid not in t.systems:
+                continue
+            app = {
+                "id": self.guid("app", sid),
+                "name": t.systems[sid].name,
+                "externalId": {"externalId": f"APM{1000 + systems.index(sid):07d}"},
+            }
+            if sid == UNSYNCED[0] and self.on("application-unsynced"):
+                app = {"id": self.guid("app", sid), "name": UNSYNCED[1], "externalId": None}
+                defects.append(
+                    defect(
+                        "application-unsynced",
+                        self.name,
+                        {"capability": cap, "system": sid},
+                        "an application entered by hand, with no external ID and its product name",
+                    )
+                )
+            support.setdefault(cap, []).append({"node": {"factSheet": app}})
         for cid, name, parent, role in caps:
             owner = t.holder(role, review) or t.holder(role, t.today)
             now = t.holder(role, t.today)
@@ -73,7 +100,7 @@ class Leanix(SourceSystem):
                         }
                     }
                 )
-            sheets[ids[cid]] = self._sheet(ids[cid], cid, name, ids.get(parent or ""), "ACTIVE", subs)
+            sheets[ids[cid]] = self._sheet(ids[cid], cid, name, ids.get(parent or ""), "ACTIVE", subs, support.get(cid, []))
         if caps and self.on("archived-capability"):
             cid, name, parent = ARCHIVED
             fid = self.guid("fs", cid)
@@ -82,7 +109,7 @@ class Leanix(SourceSystem):
         return {"factsheets": sheets}, defects
 
     @staticmethod
-    def _sheet(fid, cid, name, parent, status, subs) -> dict:
+    def _sheet(fid, cid, name, parent, status, subs, apps=()) -> dict:
         return {
             "id": fid,
             "name": name,
@@ -92,6 +119,7 @@ class Leanix(SourceSystem):
             "externalId": {"externalId": cid},
             "relToParent": {"edges": [{"node": {"factSheet": {"id": parent}}}] if parent else []},
             "subscriptions": {"edges": subs},
+            "relBusinessCapabilityToApplication": {"edges": list(apps)},
         }
 
     def router(self) -> APIRouter:
