@@ -8,7 +8,7 @@ The mock follows LeanIX's public API:
 - ``POST /services/pathfinder/v1/graphql``: ``allFactSheets(factSheetType:
   BusinessCapability, first:, after:)`` in Relay pages (``pageInfo { hasNextPage
   endCursor }``, ``edges { node }``). Each node: ``id``, ``name``, ``description``,
-  ``status`` (ACTIVE or ARCHIVED), ``externalId { externalId }``, ``relToParent`` and
+  ``status`` (ACTIVE or ARCHIVED), ``updatedAt`` (the last review), ``externalId { externalId }``, ``relToParent`` and
   ``subscriptions`` (``type``, ``user { email displayName }``, ``roles { name }``). The
   mock reads only the page size and cursor from a query, not the rest of it.
 
@@ -101,6 +101,7 @@ class Leanix(SourceSystem):
                     }
                 )
             sheets[ids[cid]] = self._sheet(ids[cid], cid, name, ids.get(parent or ""), "ACTIVE", subs, support.get(cid, []))
+            sheets[ids[cid]]["updatedAt"] = f"{review.isoformat()}T09:00:00Z"
         if caps and self.on("archived-capability"):
             cid, name, parent = ARCHIVED
             fid = self.guid("fs", cid)
