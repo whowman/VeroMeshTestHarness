@@ -18,7 +18,11 @@ Quirks, each recorded as a defect:
 - capability-owner-vacant: a capability whose owner role no one fills has no owned_by.
 
 Enterprise Architecture's business capability map is cmdb_ci_business_capability (name,
-parent, owned_by), from the profile's EA_CAPABILITIES.
+parent, owned_by), from the profile's EA_CAPABILITIES, and the applications that support each
+capability are CSDM's Provided by::Provides relationships in cmdb_rel_ci (the capability as
+parent, the business application as child), from EA_SUPPORT. Relationship types are rows of
+cmdb_rel_type, referenced by sys_id as in a real instance; a query may dot-walk a reference
+(type.name=Provided by::Provides).
 """
 
 from __future__ import annotations
@@ -74,11 +78,16 @@ class ServiceNow(SourceSystem):
                 "cmdb_ci_server",
                 "cmdb_ci_db_instance",
                 "cmdb_rel_ci",
+                "cmdb_rel_type",
                 "incident",
                 "change_request",
             )
         }
         user_id = lambda pid: self.sys_id("user", pid)  # noqa: E731
+        rel_type = {}
+        for name in ("Runs on::Runs", "Provided by::Provides"):
+            rel_type[name] = self.sys_id("reltype", name)
+            tables["cmdb_rel_type"][rel_type[name]] = {"sys_id": rel_type[name], "name": name}
         for u in t.units.values():
             sid = self.sys_id("dept", u.id)
             tables["cmn_department"][sid] = {
@@ -198,7 +207,7 @@ class ServiceNow(SourceSystem):
                     "sys_id": rid,
                     "parent": self.ref("cmdb_ci_business_app", aid),
                     "child": self.ref(table, cid),
-                    "type": {"value": "Runs on::Runs", "display_value": "Runs on::Runs"},
+                    "type": self.ref("cmdb_rel_type", rel_type["Runs on::Runs"]),
                 }
         # Enterprise Architecture: the business capability map, its owners from the same
         # monthly review (a vacant owner role leaves owned_by empty).
@@ -228,6 +237,16 @@ class ServiceNow(SourceSystem):
                 "owned_by": self.ref("sys_user", user_id(owner.id) if owner else None),
                 "install_status": INSTALLED,
                 "sys_updated_on": ts(review),
+            }
+        for cap, system in getattr(prof, "EA_SUPPORT", []):
+            if system not in t.systems:
+                continue
+            rid = self.sys_id("provides", cap, system)
+            tables["cmdb_rel_ci"][rid] = {
+                "sys_id": rid,
+                "parent": self.ref("cmdb_ci_business_capability", self.sys_id("cap", cap)),
+                "child": self.ref("cmdb_ci_business_app", self.sys_id("app", system)),
+                "type": self.ref("cmdb_rel_type", rel_type["Provided by::Provides"]),
             }
         if self.on("duplicate-ci"):
             dup_of, dup_name = DUPLICATE
@@ -348,7 +367,7 @@ class ServiceNow(SourceSystem):
         def table(table: str, request: Request, response: Response):
             rows = self._table(table)
             q = request.query_params
-            rows = query(rows, q.get("sysparm_query", ""))
+            rows = query(rows, q.get("sysparm_query", ""), self.records())
             total = len(rows)
             limit = int(q.get("sysparm_limit", 10000))
             offset = int(q.get("sysparm_offset", 0))
@@ -402,15 +421,20 @@ def shape(row: dict, fields: str | None, display: str | None, sn: ServiceNow) ->
 _TERM = re.compile(r"^(?P<f>[a-z_.]+)(?P<op>ISNOTEMPTY|ISEMPTY|STARTSWITH|LIKE|!=|>=|<=|=|>|<)(?P<v>.*)$")
 
 
-def _value(row: dict, field: str):
-    v = row.get(field.split(".")[0], "")
+def _value(row: dict, field: str, records: dict | None = None):
+    """A field's value; ``ref.field`` dot-walks a reference into the row it points at."""
+    head, _, rest = field.partition(".")
+    v = row.get(head, "")
+    if rest and isinstance(v, dict) and "link" in v and records is not None:
+        table = v["link"].split("/api/now/table/")[1].split("/")[0]
+        return _value(records.get(table, {}).get(v["value"], {}), rest, records)
     return v["value"] if isinstance(v, dict) else v
 
 
-def query(rows: list[dict], q: str) -> list[dict]:
+def query(rows: list[dict], q: str, records: dict | None = None) -> list[dict]:
     """ServiceNow's encoded query, the parts connectors use: terms joined by ^ (and) and
-    ^OR (or), the operators = != > >= < <= LIKE STARTSWITH ISEMPTY ISNOTEMPTY, and
-    ORDERBY / ORDERBYDESC."""
+    ^OR (or), the operators = != > >= < <= LIKE STARTSWITH ISEMPTY ISNOTEMPTY, dot-walking
+    through references (type.name), and ORDERBY / ORDERBYDESC."""
     if not q:
         return rows
     order = []
@@ -429,7 +453,7 @@ def query(rows: list[dict], q: str) -> list[dict]:
         m = _TERM.match(term)
         if not m:
             raise HTTPException(400, detail={"error": {"message": f"Unsupported query term in the harness: {term}"}, "status": "failure"})
-        got, op, want = str(_value(row, m["f"])), m["op"], m["v"]
+        got, op, want = str(_value(row, m["f"], records)), m["op"], m["v"]
         return {
             "=": got == want,
             "!=": got != want,
@@ -445,5 +469,5 @@ def query(rows: list[dict], q: str) -> list[dict]:
 
     out = [r for r in rows if all(any(holds(r, t) for t in g) for g in groups)]
     for field, desc in reversed(order):
-        out.sort(key=lambda r: str(_value(r, field)), reverse=desc)
+        out.sort(key=lambda r: str(_value(r, field, records)), reverse=desc)
     return out

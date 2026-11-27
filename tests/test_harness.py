@@ -197,8 +197,12 @@ def test_encoded_queries_paging_and_count(harness):
     assert int(r.headers["X-Total-Count"]) > 5 and 'rel="next"' in r.headers["Link"]
     names = [u["last_name"] for u in r.json()["result"]]
     assert names == sorted(names) and all(u["title"].startswith("Registered") for u in r.json()["result"])
-    rel = client.get("/servicenow/api/now/table/cmdb_rel_ci?sysparm_limit=1", headers=SN).json()["result"][0]
-    assert rel["type"]["value"] == "Runs on::Runs"
+    rel = client.get("/servicenow/api/now/table/cmdb_rel_ci?sysparm_limit=1&sysparm_display_value=all", headers=SN)
+    assert rel.json()["result"][0]["type"]["display_value"] in ("Runs on::Runs", "Provided by::Provides")
+    provides = client.get("/servicenow/api/now/table/cmdb_rel_ci?sysparm_query=type.name=Provided by::Provides", headers=SN).json()[
+        "result"
+    ]
+    assert provides and all(p["parent"]["link"].split("/")[4] == "cmdb_ci_business_capability" for p in provides)
 
 
 def test_servicenow_quirks_and_the_clock(harness):

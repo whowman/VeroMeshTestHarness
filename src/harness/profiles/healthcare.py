@@ -614,4 +614,7 @@ EA_CAPABILITIES = [
     ("PeopleAndCulture", "People and culture", None, "HRLeader"),
     ("WorkforceManagement", "Workforce management", "PeopleAndCulture", "HRLeader"),
 ]
+# The applications that support each capability, as the EA tools map them (ServiceNow's
+# Provided by::Provides, LeanIX's Business Capability to Application relation).
+EA_SUPPORT = [("Finance", "ERP"), ("AccountsPayable", "ERP"), ("WorkforceManagement", "HCM")]
 HR_IMPACTS = [(action, "WorkforceManagement", 20, "changes per day") for action in HR_ACTIONS.values()]
