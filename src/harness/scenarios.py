@@ -159,6 +159,37 @@ def scenarios(t: Truth, systems: dict) -> list[dict]:
         {"statements": stale},
     )
 
+    # ------------------------------------------------ Gate 1: enforcement at VeroMesh's MCP gateway
+    # The Invoice Assistant acts in the ERP through VeroMesh's gateway (its MCP server at
+    # /erp/mcp registered as a gateway target). What matters is what reaches the ERP:
+    # /harness/received records every call that arrives there.
+    def gw(tool: str, **arguments) -> dict:
+        return {"agent": agent.id, "system": "erp", "tool": tool, "arguments": arguments}
+
+    add(
+        "gateway-allowed",
+        1,
+        "Through the gateway, an allowed invoice approval reaches the ERP",
+        gw("approve_invoice", invoice_number="INV-GW-ALLOW", amount=AGENT_SMALL_ASK, currency="USD"),
+        {"outcome": "allow", "reachedSystem": True} if principal_active else {"outcome": "refuse", "reachedSystem": False},
+    )
+    add(
+        "gateway-held",
+        1,
+        "Through the gateway, an approval above the limit is held until the consulted owner approves, then reaches the ERP",
+        gw("approve_invoice", invoice_number="INV-GW-HOLD", amount=AGENT_LIMIT_ASK, currency="USD"),
+        {"outcome": "consult", "reachedBeforeApproval": False, "reachedAfterApproval": True}
+        if principal_active
+        else {"outcome": "refuse", "reachedBeforeApproval": False, "reachedAfterApproval": False},
+    )
+    add(
+        "gateway-not-offered",
+        1,
+        "A tool the gateway does not offer (changing a supplier's bank account) never reaches the ERP",
+        gw("change_supplier_bank", supplier_id="300001", bank_account="GB00HARNESS0000000001"),
+        {"offered": False, "reachedSystem": False},
+    )
+
     # ---------------------------------------------------------------- Gate 2: systems
     add(
         "system-ownership",

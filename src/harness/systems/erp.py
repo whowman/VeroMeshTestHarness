@@ -69,6 +69,10 @@ class Erp(SourceSystem):
     name = "erp"
     title = "Oracle Fusion Cloud ERP (REST API)"
 
+    def __init__(self, truth):
+        super().__init__(truth)
+        self.received: list[dict] = []  # calls that reached its MCP server (erp_mcp.py)
+
     def project(self):
         t = self.truth
         rng = random.Random(f"{t.seed}:erp")
